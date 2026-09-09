@@ -1,0 +1,9 @@
+{
+  "apiVersion": "pac.jazzmind.dev/v1alpha1",
+  "kind": "knowledge",
+  "metadata": { "name": "knowledge-hub", "version": "0.1.0", "owner": "demo-team", "description": "Synthetic document workspace; example image is a placeholder, not a runnable build." },
+  "workload": { "image": "example.invalid/knowledge-hub@sha256:0000000000000000000000000000000000000000000000000000000000000000", "port": 8080, "cpuMillis": 500, "memoryMiB": 512 },
+  "resources": [{ "name": "records", "type": "postgres" }, { "name": "search", "type": "pgvector" }, { "name": "documents", "type": "objects" }],
+  "capabilities": [{ "name": "knowledge", "operation": "search", "binding": "mock" }],
+  "network": { "inbound": "deny", "outbound": "deny" }
+}

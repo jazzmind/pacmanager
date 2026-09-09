@@ -1,0 +1,14 @@
+{
+  "name": "@jazzmind/pacmanager",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "Portable Artifact Contract manager: policy-first business software",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node src/cli.js plan examples/knowledge-hub/artifact.json",
+    "check": "node scripts/check.js"
+  }
+}
