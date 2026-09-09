@@ -1,0 +1,40 @@
+{
+  "apps": [
+    {
+      "name": "pacmanager",
+      "repo": ".",
+      "language": "javascript",
+      "specDir": "specs/core",
+      "sources": {
+        "api": [
+          "src/**/*.js"
+        ],
+        "tests": [
+          "test/**/*.test.js"
+        ]
+      },
+      "framework": "node:test",
+      "testOutput": "test",
+      "docs": "docs"
+    }
+  ],
+  "llm": {
+    "provider": "openai",
+    "model": "CONFIGURE_APPROVED_MODEL",
+    "apiKeyEnv": "PAC_SPECGUARD_API_KEY"
+  },
+  "triggers": {
+    "onPlanPhase": false,
+    "onPR": false,
+    "healAfterGenerate": false
+  },
+  "heal": {
+    "maxRetries": 0,
+    "testCommand": "npm test"
+  },
+  "matrix": {
+    "format": "json",
+    "output": ".specguard/traceability.json"
+  }
+}
+
