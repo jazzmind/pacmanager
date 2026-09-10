@@ -2,6 +2,8 @@
 
 ## Bounded demo implementation
 
+Living assurance extension: 17 local tests now pass (one Docker integration test is skipped locally). Added structured ARB/readiness/BOM data, automatic published-change propagation, human decision staleness, MCP prompts/resources/tools, report previews/downloads, release history and reviewed GitHub code publication. GitHub publishing is tested with an injected API double; a real artifact publication has not been performed. Reports use HTML/Markdown/JSON. Reference DOCX files were inspected but are not copied into the public repository. An arcade-inspired logo concept is included at `assets/logo.png`.
+
 Locally verified with Node.js 24.19.0: 14 passing tests, including the full authenticated MCP/API journey, scoped collaborator isolation, upload escaping, immutable published definition, export checksums, standalone exported app startup/auth, stdio bridge, persisted state reload and failed/tampered build rejection. Core examples/spec references also pass. Node.js 22 remains the CI target.
 
 Implemented: browser workspace; fixed claims/knowledge templates; persistent single-writer JSON store; Docker and Kubernetes build adapters; mock claims; shared notes/uploads; publish and runnable snapshot export; local setup and Kubernetes deployment generator.

@@ -1,3 +1,4 @@
+import { initGraduation } from './graduation-ui.js';
 const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
@@ -39,4 +40,5 @@ $('invite').onclick=()=>{$('invite-url').hidden=true;$('invite-form').hidden=fal
 $('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id+'/invite',{label:$('colleague').value});$('invite-url').value=result.url;$('invite-url').hidden=false;$('invite-form').hidden=true;$('invite-url').select();});
 const invitation=new URLSearchParams(location.hash.slice(1)).get('invite');if(invitation){history.replaceState(null,'',location.pathname+location.search);try{await api('session',{token:invitation});}catch(error){toast(error.message);}}
 try{await enter();}catch{/* Login is shown until authenticated. */}
+initGraduation({api,action,$,getApp:()=>app,getMe:()=>me,toast,esc});
 setInterval(()=>{if(me&&!document.hidden)refresh().catch(error=>toast(error.message));},2000);

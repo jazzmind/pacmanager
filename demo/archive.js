@@ -1,6 +1,7 @@
 import { gzipSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { render,sha } from './definition.js';
+import { assuranceRecord,reportHtml,reportMarkdown } from './assurance.js';
 
 export function tar(files){
   const chunks=[];
@@ -13,9 +14,10 @@ export function tar(files){
     chunks.push(h,data,Buffer.alloc((512-data.length%512)%512));
   }return gzipSync(Buffer.concat([...chunks,Buffer.alloc(1024)]));
 }
-export function graduationBundle(app){
+export function graduationFiles(app,{includeData=true}={}){
   if(!app.release)throw new Error('Publish before exporting');
-  const payload={config:app.release.result.config,documents:app.documents,comments:app.comments,binding:app.binding,claims:app.claims};
+  const payload={config:app.release.result.config,documents:includeData?app.documents:[],comments:includeData?app.comments:[],binding:includeData&&app.binding,claims:includeData?app.claims:[]};
+  const assurance=assuranceRecord(app);
   const files={
     'package.json':JSON.stringify({name:'pac-graduated-app',private:true,type:'module',scripts:{start:'node server.js'},engines:{node:'>=22'}},null,2),
     'server.js':readFileSync(new URL('./standalone.js',import.meta.url),'utf8'),
@@ -27,7 +29,11 @@ export function graduationBundle(app){
     'score.yaml':'apiVersion: score.dev/v1b1\nmetadata:\n  name: graduated-app\ncontainers:\n  app:\n    image: .\nservice:\n  ports:\n    web:\n      port: 8080\n      targetPort: 8080\n',
     'Dockerfile':'FROM node:22-alpine\nWORKDIR /app\nCOPY --chown=10001:10001 package.json server.js index.html data.json ./\nUSER 10001:10001\nENV PAC_EXPORT_HOST=0.0.0.0\nEXPOSE 8080\nCMD ["node","server.js"]\n'
   };
-  for(const doc of app.documents) files['documents/'+doc.id+'.base64']=doc.base64;
+  files['assurance.json']=JSON.stringify(assurance,null,2);
+  for(const kind of ['arb','readiness','bom']){files['reports/'+kind+'.md']=reportMarkdown(assurance,kind);files['reports/'+kind+'.html']=reportHtml(assurance,kind);}
+  if(!includeData)files['README.md']+='\nThis code-only publication excludes uploaded documents, discussion notes and claims rows. Review assurance.json and report prose for any owner-supplied sensitive information before publishing.\n';
+  if(includeData)for(const doc of app.documents) files['documents/'+doc.id+'.base64']=doc.base64;
   files['checksums.json']=JSON.stringify(Object.fromEntries(Object.entries(files).map(([p,c])=>[p,sha(c)])),null,2);
-  return tar(files);
+  return files;
 }
+export const graduationBundle=app=>tar(graduationFiles(app));

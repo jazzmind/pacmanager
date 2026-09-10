@@ -1,4 +1,6 @@
 # PAC Manager
+<img src="assets/logo.png" alt="PAC Manager logo with four arcade rooms" width="200">
+
 Portable Artifact Contract manager — build with your AI, keep control of your software.
 
 An Apache-2.0 open-source project intended to demonstrate interesting AI engineering at Plymouth Rock. No commercial edition, paid governance tier, or insurer-specific core. Organizational endorsement, trademarks and release communications require maintainer approval.
@@ -12,6 +14,8 @@ npm run demo
 ```
 
 Open http://127.0.0.1:3000 and sign in with the token in `.pac-demo/owner.token`. Follow the [demo script and Claude connection instructions](docs/demo.md). A [private Kubernetes/EKS deployment path](deploy/demo.md) uses the same application with ephemeral build Jobs.
+
+The **Graduate** view generates Architecture Review Board, Systems Readiness and Bill of Materials reports from one structured JSON record. Published app changes automatically refresh observed facts and flag authored decisions for re-review. Preview/download reports and publish a reviewed code-only snapshot to a configured private GitHub repository. See [living assurance and GitHub publishing](docs/assurance.md).
 
 This is **not a production untrusted-code host**. Applications use constrained definitions and trusted templates. The implementation workspace verified the flow using explicit process mode; Docker/EKS enforcement and a live desktop-client/browser rehearsal are separate gates. See [verification status](docs/implementation-status.md).
 
