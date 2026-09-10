@@ -8,7 +8,9 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test",
-    "demo": "node src/cli.js plan examples/knowledge-hub/artifact.json",
+    "demo": "node demo/server.js",
+    "demo:setup": "node demo/setup.js",
+    "demo:plan": "node src/cli.js plan examples/knowledge-hub/artifact.json",
     "check": "node scripts/check.js"
   }
 }

@@ -3,14 +3,25 @@ Portable Artifact Contract manager — build with your AI, keep control of your 
 
 An Apache-2.0 open-source project intended to demonstrate interesting AI engineering at Plymouth Rock. No commercial edition, paid governance tier, or insurer-specific core. Organizational endorsement, trademarks and release communications require maintainer approval.
 
-## Status: executable design scaffold
-This is **not a secure application host yet**. The CLI validates alpha contracts, produces deterministic deployment plans and exports graduation metadata. The pure policy evaluator tests exact artifact/user/version/binding grants. It does not enforce a network boundary or run generated applications.
+## Status: runnable bounded demo
+The [five-minute demo](docs/demo.md) now supports MCP authoring, container build adapters, live previews, document uploads, scoped team notes, mock claims, internal publication and standalone graduation downloads. Start locally with Node.js 22+ and Docker:
+
+```sh
+npm run demo:setup
+npm run demo
+```
+
+Open http://127.0.0.1:3000 and sign in with the token in `.pac-demo/owner.token`. Follow the [demo script and Claude connection instructions](docs/demo.md). A [private Kubernetes/EKS deployment path](deploy/demo.md) uses the same application with ephemeral build Jobs.
+
+This is **not a production untrusted-code host**. Applications use constrained definitions and trusted templates. The implementation workspace verified the flow using explicit process mode; Docker/EKS enforcement and a live desktop-client/browser rehearsal are separate gates. See [verification status](docs/implementation-status.md).
+
+The original CLI still validates alpha contracts, produces deterministic deployment plans and exports graduation metadata. Its pure policy evaluator remains a reference implementation, not the demo's network enforcement mechanism.
 
 No cloud account, model key or npm installation is needed for these commands (Node.js 22+):
 ```sh
 npm test
 npm run check
-npm run demo
+npm run demo:plan
 node src/cli.js validate examples/knowledge-hub/artifact.json
 node src/cli.js export examples/knowledge-hub/artifact.json
 ```
@@ -26,14 +37,14 @@ Start with [product](docs/product.md), [architecture](docs/architecture.md), [th
 
 ## Repository map
 - `src/`: dependency-free contract, policy, planner and CLI reference core.
+- `demo/`: runnable workspace, MCP bridge, trusted builder and standalone export.
 - `test/`: independent executable acceptance tests.
 - `specs/`: living specifications with stable requirement IDs.
 - `docs/`: product, architecture, decisions, operations and integration contracts.
 - `schemas/`: strict machine-readable alpha artifact schema.
 - `examples/`: synthetic artifact contracts.
-- `deploy/`: non-deployable security-baseline references.
+- `deploy/`: demo Kubernetes manifest generator and separate security-baseline references.
 - `.specguard/`: opt-in QA configuration; no automatic healing.
 
 ## Contributions
 Useful first contributions include schema/validator parity, a mock capability provider, a constrained runtime adapter, permission-aware knowledge APIs and tested export/import round trips. See [CONTRIBUTING](CONTRIBUTING.md). Maintainers retain authority over security policy and releases.
-

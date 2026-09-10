@@ -4,5 +4,7 @@ node_modules/
 !.env.example
 dist/
 coverage/
+.pac-demo/
+demo-deployment.json
 .specguard/traceability.json
 .specguard/plans/
