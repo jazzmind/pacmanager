@@ -7,6 +7,8 @@ import { Store,DemoError } from './store.js';
 import { createBuilder } from './builders.js';
 import { render } from './definition.js';
 import { graduationBundle } from './archive.js';
+import { assuranceSchema,assuranceRecord,completeness,saveAssurance,reportHtml,reportMarkdown,authoringGuide } from './assurance.js';
+import { createGithubPublisher } from './github-publisher.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const toolsList=[
@@ -17,10 +19,14 @@ const toolsList=[
   ['build_application','Start a real build, then inspect its status',{id:{type:'string'}}],
   ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}}],
   ['publish_application','Publish the current successfully built draft internally',{id:{type:'string'}}],
-  ['graduation_link','Get the authenticated download URL for a published snapshot',{id:{type:'string'}}]
+  ['graduation_link','Get the authenticated download URL for a published snapshot',{id:{type:'string'}}],
+  ['get_assurance','Read generated architecture, readiness, BOM data and gaps. Managed facts refresh with every published change.',{id:{type:'string'}}],
+  ['get_assurance_schema','Get the structured dossier schema and authoring guidance',{}],
+  ['update_assurance','Save owner-supplied decisions and evidence with revision and release checks. Managed fields regenerate automatically.',{id:{type:'string'},revision:{type:'integer'},release:{type:['integer','null']},data:assuranceSchema}],
+  ['preview_assurance_document','Generate a report from current release data',{id:{type:'string'},kind:{enum:['arb','readiness','bom']}}]
 ].map(([name,description,properties])=>({name,description,inputSchema:{type:'object',properties,required:Object.keys(properties),additionalProperties:false}}));
 
-export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000'}){
+export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher()}){
   if(!ownerToken||ownerToken.length<32)throw new Error('Owner token must be at least 32 characters');
   const store=new Store(directory,builder);
   const server=http.createServer(async(req,res)=>{
@@ -32,7 +38,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       if(req.headers.origin&&req.headers.origin!==origin)throw new DemoError(403,'Origin denied');
       const url=new URL(req.url,origin),path=url.pathname;
       if(req.method==='GET'&&path==='/health')return json(200,{ok:true});
-      if(req.method==='GET'&&['/','/ui.js','/style.css'].includes(path)){
+      if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css'].includes(path)){
         const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');return res.end(readFileSync(new URL('./web/'+file,import.meta.url)));
       }
       let body={};
@@ -55,8 +61,20 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(!Object.hasOwn(body,'id')){res.writeHead(202);return res.end();}
         let result;
         try{
-          if(body.method==='initialize')result={protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'pacmanager-demo',version:'0.2.0'}};
+          if(body.method==='initialize')result={protocolVersion:'2025-03-26',capabilities:{tools:{},prompts:{},resources:{}},serverInfo:{name:'pacmanager-demo',version:'0.3.0'}};
           else if(body.method==='ping')result={};
+          else if(body.method==='prompts/list')result={prompts:[{name:'prepare_graduation',description:'Generate and maintain architecture review, systems readiness and BOM records',arguments:[{name:'artifactId',description:'Application ID',required:true}]},{name:'evolve_application',description:'Change an application, rebuild, publish and verify updated documentation',arguments:[{name:'artifactId',description:'Application ID',required:true},{name:'change',description:'Requested change',required:true}]}]};
+          else if(body.method==='prompts/get'){
+            const {name,arguments:a={}}=body.params||{};store.access(principal,a.artifactId,true);
+            if(!['prepare_graduation','evolve_application'].includes(name))throw new Error('Unknown prompt');
+            if(name==='evolve_application'&&(typeof a.change!=='string'||!a.change.trim()))throw new Error('A change is required');
+            result={messages:[{role:'user',content:{type:'text',text:authoringGuide+'\nArtifact ID: '+a.artifactId+(name==='evolve_application'?'\nUser requested change: '+a.change+'\nInspect the current app and assurance data. Use update_application with the current revision for supported changes (title, brief, claims/knowledge template, accent). Build and poll inspect_application until successful; publish only after the current build succeeds. Then get_assurance and preview all three reports. Verify release/source digest changed and generated sections reflect the new definition. Preserve owner-supplied records, identify stale decisions for re-review, and describe unsupported changes honestly. Never pretend a brief edit implements an unsupported behavior.':'')}}]};
+          }
+          else if(body.method==='resources/list')result={resources:[{uri:'pac://assurance/schema',name:'Assurance schema',mimeType:'application/json'},{uri:'pac://assurance/guide',name:'Graduation authoring guidance',mimeType:'text/plain'}]};
+          else if(body.method==='resources/read'){
+            const uri=body.params?.uri;if(!['pac://assurance/schema','pac://assurance/guide'].includes(uri))throw new Error('Unknown resource');
+            result={contents:[{uri,mimeType:uri.endsWith('schema')?'application/json':'text/plain',text:uri.endsWith('schema')?JSON.stringify(assuranceSchema):authoringGuide}]};
+          }
           else if(body.method==='tools/list')result={tools:toolsList};
           else if(body.method==='tools/call'){
             const {name,arguments:a={}}=body.params||{};let output;
@@ -69,14 +87,43 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
               case 'publish_application':store.publish(principal,a.id);output={url:origin+'/?app='+a.id+'&published=1'};break;
               case 'graduation_link':store.access(principal,a.id,true);output={url:origin+'/api/apps/'+a.id+'/export',authentication:'Workspace browser session required'};break;
+              case 'get_assurance':{const record=assuranceRecord(store.access(principal,a.id));output={record,completeness:completeness(record)};break;}
+              case 'get_assurance_schema':output={schema:assuranceSchema,guide:authoringGuide};break;
+              case 'update_assurance':output=saveAssurance(store,principal,a.id,a);break;
+              case 'preview_assurance_document':{const record=assuranceRecord(store.access(principal,a.id));output={markdown:reportMarkdown(record,a.kind),preview:origin+'/api/apps/'+a.id+'/reports/'+a.kind,release:record.release,sourceDigest:record.sourceDigest};break;}
               default:throw new DemoError(400,'Unknown tool');
             }
             result={content:[{type:'text',text:JSON.stringify(output)}]};
           }else return json(200,{jsonrpc:'2.0',id:body.id,error:{code:-32601,message:'Method not found'}});
-        }catch(error){result={isError:true,content:[{type:'text',text:error.message}]};}
+        }catch(error){if(body.method!=='tools/call')return json(200,{jsonrpc:'2.0',id:body.id,error:{code:-32602,message:error.message}});result={isError:true,content:[{type:'text',text:error.message}]};}
         return json(200,{jsonrpc:'2.0',id:body.id,result});
       }
       if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,mode:builder.mode});
+      const report=path.match(/^\/api\/apps\/([a-f0-9-]+)\/reports\/(arb|readiness|bom)$/);
+      if(report&&req.method==='GET'){
+        const record=assuranceRecord(store.access(principal,report[1])),kind=report[2],format=url.searchParams.get('format')||'html';
+        if(!['html','md','json'].includes(format))throw new DemoError(400,'Choose html, md or json');
+        const content=format==='json'?JSON.stringify(record,null,2):format==='md'?reportMarkdown(record,kind):reportHtml(record,kind);
+        res.setHeader('Content-Type',format==='html'?'text/html; charset=utf-8':format==='md'?'text/markdown; charset=utf-8':'application/json');
+        res.setHeader('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+        if(url.searchParams.get('download')==='1')res.setHeader('Content-Disposition',`attachment; filename="${kind}.${format}"`);
+        return res.end(content);
+      }
+      const assurancePath=path.match(/^\/api\/apps\/([a-f0-9-]+)\/(assurance|github-config|github-prepare|github-publish)$/);
+      if(assurancePath){
+        const [,id,action]=assurancePath,app=store.access(principal,id,action!=='assurance'||req.method!=='GET');
+        if(action==='assurance'&&req.method==='GET'){const record=assuranceRecord(app);return json(200,{record,completeness:completeness(record)});}
+        if(action==='assurance'&&req.method==='POST')return json(200,saveAssurance(store,principal,id,body));
+        if(action==='github-config'&&req.method==='GET')return json(200,github.configuration());
+        if(action.startsWith('github-')&&req.method==='POST'){
+          if(bearer||principal.kind!=='owner')throw new DemoError(403,'Use the owner browser session to review and publish code');
+          if(action==='github-prepare')return json(200,github.prepare(app,body.repository));
+          if(action==='github-publish'){
+            const result=await github.publish(app,body);store.audit(app,'code published to '+result.repository+' at '+result.commit,principal);store.save();return json(200,result);
+          }
+        }
+        throw new DemoError(405,'Method not allowed');
+      }
       if(path==='/api/logout'&&req.method==='POST'){store.state.sessions=store.state.sessions.filter(s=>s!==principal);store.save();cookie('');return json(200,{ok:true});}
       if(path==='/api/apps'){
         if(req.method==='GET')return json(200,store.list(principal));

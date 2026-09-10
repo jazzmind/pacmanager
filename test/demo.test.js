@@ -21,7 +21,7 @@ test('DEMO-001 complete authenticated author/build/collaborate/publish/export fl
   assert.equal((await call('/api/apps',undefined,'wrong')).status,401);
   const cross=await fetch(base+'/api/apps',{headers:{Authorization:'Bearer '+ownerToken,Origin:'https://evil.example'}});assert.equal(cross.status,403);
   const initialized=await call('/mcp',{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26'}});assert.equal(initialized.data.result.protocolVersion,'2025-03-26');
-  const tools=await call('/mcp',{jsonrpc:'2.0',id:2,method:'tools/list'});assert.equal(tools.data.result.tools.length,8);
+  const tools=await call('/mcp',{jsonrpc:'2.0',id:2,method:'tools/list'});assert.ok(tools.data.result.tools.some(t=>t.name==='create_application'));assert.ok(tools.data.result.tools.some(t=>t.name==='get_assurance'));
   const created=await call('/mcp',{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'create_application',arguments:config}});const app=JSON.parse(created.data.result.content[0].text),p='/api/apps/'+app.id;
   assert.equal((await call(p+'/publish',{})).status,409);
   assert.equal((await call(p+'/build',{})).status,202);await runtime.store.lastBuild;
@@ -50,7 +50,7 @@ test('DEMO-001 complete authenticated author/build/collaborate/publish/export fl
   const exportToken=randomBytes(32).toString('hex');const child=spawn(process.execPath,['server.js'],{cwd:exportDir,env:{PATH:process.env.PATH,PORT:String(exportPort),PAC_EXPORT_TOKEN:exportToken},stdio:'pipe'});t.after(()=>child.kill());
   const exportUrl='http://127.0.0.1:'+exportPort;let healthy=false;for(let i=0;i<50;i++){try{healthy=(await fetch(exportUrl+'/health')).ok;if(healthy)break;}catch{}await new Promise(r=>setTimeout(r,20));}assert.ok(healthy,'Exported application starts independently');
   assert.equal((await fetch(exportUrl)).status,401);const standalone=await fetch(exportUrl,{headers:{Authorization:'Basic '+Buffer.from('demo:'+exportToken).toString('base64')}});assert.equal(standalone.status,200);assert.match(await standalone.text(),/Claims team workspace/);
-  const bridge=spawn(process.execPath,['demo/mcp-stdio.js'],{cwd:new URL('..',import.meta.url),env:{PATH:process.env.PATH,PAC_MANAGER_URL:base,PAC_MANAGER_TOKEN:ownerToken},stdio:'pipe'});let bridgeOut='';bridge.stdout.on('data',b=>bridgeOut+=b);bridge.stdin.end(JSON.stringify({jsonrpc:'2.0',id:99,method:'tools/list'})+'\n');await new Promise((resolve,reject)=>{bridge.on('error',reject);bridge.on('exit',code=>code===0?resolve():reject(new Error('Bridge failed')));});assert.equal(JSON.parse(bridgeOut).result.tools.length,8);
+  const bridge=spawn(process.execPath,['demo/mcp-stdio.js'],{cwd:new URL('..',import.meta.url),env:{PATH:process.env.PATH,PAC_MANAGER_URL:base,PAC_MANAGER_TOKEN:ownerToken},stdio:'pipe'});let bridgeOut='';bridge.stdout.on('data',b=>bridgeOut+=b);bridge.stdin.end(JSON.stringify({jsonrpc:'2.0',id:99,method:'tools/list'})+'\n');await new Promise((resolve,reject)=>{bridge.on('error',reject);bridge.on('exit',code=>code===0?resolve():reject(new Error('Bridge failed')));});assert.ok(JSON.parse(bridgeOut).result.tools.some(t=>t.name==='update_assurance'));
   const restored=createDemo({directory,ownerToken,builder:createBuilder('process')});assert.equal(restored.store.state.apps[0].release.number,1);assert.equal(restored.store.state.apps[0].comments.length,1);
   assert.ok(!readFileSync(join(directory,'state.json'),'utf8').includes(collaborator));
 });

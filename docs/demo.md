@@ -42,7 +42,7 @@ Use a local MCP client such as Claude Desktop. Add this entry to the client's MC
 }
 ```
 
-The bridge communicates over stdio to the client and authenticated HTTP to the local controller. Eight tools list, create, inspect, update, build, bind mocks, publish and return an export link. The bridge is tested against the server; a live Claude session has not been exercised in the implementation workspace. See the [official local MCP setup guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers). This demo negotiates MCP 2025-03-26 and implements single JSON-RPC messages, not batch requests. Remote ChatGPT connector/OAuth support is not implemented. The eight-step demo uses the Claude path.
+The bridge communicates over stdio to the client and authenticated HTTP to the local controller. Application tools list, create, inspect, update, build, bind mocks, publish and return an export link. Assurance tools, prompts and resources maintain structured architecture, readiness and BOM records. The bridge is tested against the server; a live Claude session has not been exercised in the implementation workspace. See the [official local MCP setup guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers). This demo negotiates MCP 2025-03-26 and implements single JSON-RPC messages, not batch requests. Remote ChatGPT connector/OAuth support is not implemented. The eight-step demo uses the Claude path.
 
 ## Rehearsal script
 
@@ -56,10 +56,12 @@ Prepare two browser profiles, an authenticated local MCP client, and `demo/fixtu
 | 1:35–2:00 | Open the live preview. | Compiled claims workbench; isolated browser document without executable scripts. |
 | 2:00–3:00 | Upload the sample guidance. In Team, create an invitation, open it in the second profile, and post a note. | The document and colleague's note appear in both sessions within two seconds. |
 | 3:00–3:30 | In Access, bind mock claims. | Five synthetic claims appear; no enterprise credentials or network calls. |
-| 3:30–4:10 | Publish internally. | Published v1 is available to invited users. Edit the draft title to show that release v1 stays fixed. |
-| 4:10–5:00 | Download the graduation package. | A real tar.gz containing a standalone app, source, data, build evidence and checksums. |
+| 3:30–4:10 | Publish v1, then ask Claude to change the title/accent and republish. | The app becomes v2 and generated architecture/readiness/BOM data follows the published change. |
+| 4:10–5:00 | Open Graduate, preview the three reports, download a report and package, then publish a preconfigured GitHub destination after reviewing its files. | Reports reference v2; a real tar.gz contains app/source/data/evidence; code-only publication creates a private repository branch. |
 
 If the authoring client is unavailable, the New application form exercises the same definition and build path. Say that the authoring connection is unavailable; do not present the form as AI generation.
+
+Configure the GitHub destination and token before rehearsing the final step; the button is disabled without them. The file review must be real, so allow extra time on the first rehearsal. See [living assurance](assurance.md) for the change prompt, structured-data ownership and publication setup. The final step supports HTML/Markdown downloads and JSON source; it does not reproduce the reference Word layouts.
 
 ## Graduation
 
