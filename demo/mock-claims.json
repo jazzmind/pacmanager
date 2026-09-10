@@ -1,0 +1,7 @@
+[
+  {"id":"CLM-DEMO-1041","loss":"Water damage","status":"Review","estimate":18400},
+  {"id":"CLM-DEMO-1042","loss":"Wind / roof","status":"Open","estimate":9200},
+  {"id":"CLM-DEMO-1043","loss":"Hail damage","status":"Approved","estimate":6700},
+  {"id":"CLM-DEMO-1044","loss":"Water damage","status":"Open","estimate":31200},
+  {"id":"CLM-DEMO-1045","loss":"Tree impact","status":"Review","estimate":14500}
+]

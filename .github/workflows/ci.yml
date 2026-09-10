@@ -12,4 +12,5 @@ jobs:
           node-version: '22'
       - run: npm test
       - run: npm run check
-
+      - run: npm run demo:setup
+      - run: PAC_TEST_DOCKER=1 node --test test/demo-docker.test.js
