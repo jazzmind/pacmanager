@@ -5,15 +5,17 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Store,DemoError } from './store.js';
 import { createBuilder } from './builders.js';
-import { render,injectBriefings } from './definition.js';
+import { render,injectBriefings,escape } from './definition.js';
 import { graduationBundle } from './archive.js';
 import { assuranceSchema,assuranceRecord,completeness,saveAssurance,reportHtml,reportMarkdown,authoringGuide } from './assurance.js';
 import { createGithubPublisher } from './github-publisher.js';
 import { createRuntimeAdapter } from './runtime-adapter.js';
 import { createGraduationAdapters } from './graduation-adapter.js';
+import { loadBrand } from './brand.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
-const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:['teal','blue','plum']},tier:{enum:['template','static']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'}};
+const brand=loadBrand();
+const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:Object.keys(brand.accentPalette())},tier:{enum:['template','static']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'}};
 const toolsList=[
   ['list_applications','List your applications',{},[]],
   ['create_application','Create an application. Omit tier (or pass "template") for the bounded claims/knowledge layout. Pass tier "static" with a source file map to author real generated code, such as a playable game — index.html is required; inline the app\'s CSS/JS or split across additional .css/.js/.json/.svg files.',definitionProps,['title','brief','template','accent']],
@@ -32,7 +34,7 @@ const toolsList=[
   ['deployment_status','Get live deployment status from the runtime adapter',{id:{type:'string'}},['id']],
   ['deployment_logs','Get recent deployment logs from the runtime adapter',{id:{type:'string'},tail:{type:'integer'}},['id']],
   ['undeploy_application','Remove the deployed release via the runtime adapter. Refused unless the current release has been exported first (GET /api/apps/:id/export) — undeploy can permanently delete provisioned data.',{id:{type:'string'}},['id']],
-  ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'}},['id','adapter','target']]
+  ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own. Blocked if any declared service binding (envRefs) has no production equivalent (services catalog projection "local-only"), unless allowLocalOnly is set.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'},allowLocalOnly:{type:'boolean'}},['id','adapter','target']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
 export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters()}){
@@ -56,8 +58,24 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       if(req.headers.origin&&!originAliases.has(req.headers.origin))throw new DemoError(403,'Origin denied');
       const url=new URL(req.url,origin),path=url.pathname;
       if(req.method==='GET'&&path==='/health')return json(200,{ok:true});
+      if(req.method==='GET'&&path==='/brand.css'){res.setHeader('Content-Type','text/css');return res.end(brand.cssVars());}
+      if(req.method==='GET'&&path.startsWith('/brand/')){
+        const asset=path.slice('/brand/'.length);
+        const assetPath=brand.assetPath(asset);
+        if(!assetPath)throw new DemoError(404,'Unknown brand asset');
+        res.setHeader('Content-Type',assetPath.endsWith('.svg')?'image/svg+xml':assetPath.endsWith('.png')?'image/png':'application/octet-stream');
+        return res.end(readFileSync(assetPath));
+      }
       if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css'].includes(path)){
-        const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');return res.end(readFileSync(new URL('./web/'+file,import.meta.url)));
+        const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');
+        let content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');
+        if(file==='index.html'){
+          content=content
+            .replace(/\{\{PAC_PRODUCT_NAME\}\}/g,escape(brand.data.productName||'PAC Manager'))
+            .replace(/\{\{PAC_PRODUCT_TAGLINE\}\}/g,escape(brand.t('product.tagline','')))
+            .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
+        }
+        return res.end(content);
       }
       let body={};
       if(req.method==='POST'){
@@ -161,6 +179,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='preview'){
           const result=url.searchParams.get('published')==='1'?app.release?.result:app.build?.status==='ready'?app.build.result:null;
           if(!result)throw new DemoError(409,'Build or publish this application first');
+          if(app.config.tier==='app')return json(200,{tier:'app',preview:'not available for the app tier — an app-tier release has no inline HTML to render; use deployment_status or deployment_logs once deployed',sourceDigest:result.sourceDigest,fileCount:result.fileCount,gitCommit:result.gitCommit,deployments:app.deployments});
           const generated=app.config.tier==='static';
           const scriptSrc=generated&&result.scriptHashes?.length?result.scriptHashes.map(h=>`'sha256-${h}'`).join(' '):"'none'";
           res.setHeader('Content-Type','text/html');

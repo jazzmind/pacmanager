@@ -1,11 +1,19 @@
 import { spawn } from 'node:child_process';
 
 /** Run a plugin adapter out of process: JSON envelope on stdin, one JSON reply on stdout.
- * Mirrors the hardening in builders.js's command() helper (deadline, output cap, minimal env)
- * because an adapter is exactly as untrusted as a build worker. */
+ * Mirrors builders.js's command() helper for deadline and output-cap hardening — but
+ * deliberately NOT its stripped-env hardening. A build worker runs untrusted, app-authored
+ * build config; a runtime/graduation adapter is the opposite trust relationship — an
+ * operator explicitly installs and wires one up via PAC_RUNTIME_ADAPTER /
+ * PAC_GRADUATION_ADAPTERS specifically so it can read its own connection config
+ * (DEPLOYKIT_API_URL, DEPLOYKIT_TOKEN, ...) from the environment, same as any normal
+ * CLI plugin. Stripping that env here silently breaks every env-var-configured adapter
+ * (found live: a real deploy failed because the adapter process couldn't see
+ * DEPLOYKIT_TOKEN, and fell back to a default that happened to look like a different
+ * failure). The envelope on stdin — not the environment — is the untrusted-input boundary. */
 export function runAdapter(command, args, input, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, HOME: process.env.HOME } });
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
     let output = '', error = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Adapter timed out')); }, timeoutMs);
     child.stdout.on('data', b => { output += b; if (output.length > 2_000_000) { child.kill(); reject(new Error('Adapter output too large')); } });

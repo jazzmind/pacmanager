@@ -1,5 +1,169 @@
 # Verification record
 
+## Remaining tasks
+
+Broken out in detail because "done" claims above are easy to skim past the gaps. Each item
+names the exact file/behavior involved and whether it's blocked on something outside this
+repo (a live sandbox, DevOps sign-off, a model endpoint) or just not built yet.
+
+### Blocking the three stated goals (local app → sandbox app → migrate chatprc)
+
+- **R5 — Per-app access control does not exist at any layer.** Verified: deploykit's
+  oauth2-proxy gate is server-wide with `OAUTH2_PROXY_EMAIL_DOMAINS="*"` (whole tenant, not
+  an allowlist); generated per-app nginx blocks (`proxy/nginx.py` `add_route()`) carry zero
+  auth directives and there is no parameter to pass one; the control plane's shared
+  `DEPLOYKIT_TOKEN` + self-asserted `X-Deploy-User` means any token holder can
+  stop/start/undeploy/read logs for *any* app; `/api/v1/status-public` and the built-in
+  landing page are unauthenticated and list every app with its owner and URL. Needed for
+  "visible only to me and the people I share it with": `auth_request_set
+  $dk_email $upstream_http_x_auth_request_email;` per app location, checked against an
+  allowlist pacmanager already has the data model for (its collaborator/invite system) —
+  not yet threaded through deploykit's `AppSpec` → `add_route()` → nginx templates.
+- **The export-before-undeploy safety gate has no working path for the app tier.**
+  Verified live: `graduationFiles()`/the standalone export route now correctly *refuses* an
+  app-tier release ("use graduate_application instead" — see R2 below), which means
+  `store.recordExport()` can never be called for an app-tier app, which means
+  `undeployApplication`'s "export the current release first" guard can never be satisfied,
+  which means **`undeploy_application` is currently unusable for any app-tier app**. Needs
+  either a real per-app export mechanism (chatprc's own pattern: `GET /export` with a
+  bearer token, called and recorded as evidence — see the chatprc migration section below)
+  or a documented bypass for genuinely stateless apps.
+- **A real React/Vite app has not been scaffolded yet.** The `app` tier (source digesting,
+  referenced-not-embedded storage, deploy-time materialization) is built and proven end to
+  end against a minimal static nginx app — but not yet against an actual `npm ci && vite
+  build` Dockerfile-based app, which is the actual Goal 1 deliverable. The mechanism is
+  proven; the specific app is not built.
+- **The agent service (Letta or equivalent) has not been stood up.** Needs a short spike
+  (Letta vs Agno vs Goose). Its pgvector prerequisite is now resolved this pass — see the
+  new section below — but the service itself is not yet running.
+- **Deploying to the sandbox (not just locally) is unimplemented.** `materializeRemote()`
+  in the runtime adapter exists and is unit-tested, but has never been run against a real
+  SSH tunnel to the actual sandbox host — only against a local fake server.
+- **The chatprc import path (R8, "imported" artifact kind) does not exist.** Nothing reads
+  `.deploykit/apps.json`/`package.json`/`Dockerfile`/`start.sh` to construct a pacmanager
+  artifact from a pre-existing repo. Needed before chatprc (or any existing app) can be
+  brought under pacmanager management at all.
+- **DevOps sign-off items, unchanged:** CODEOWNERS delegation for `devops-deployments`,
+  whether pacmanager may trigger `Deploy Applications` via the Jenkins API vs. a human
+  running it, who provisions the "worksite" environment envelope.
+
+### Services layer, brand pack, and pracman repo (this pass)
+
+New PR-specific repo `pracman` (`~/Code/utilities/pracman`, destined for
+`prac-innovation/pracman`, not yet pushed) absorbed the former `pacmanager-adapters` repo
+(0 commits there — a directory move, not a migration; all 35 tests pass from the new
+location at `pracman/adapters/`). It now holds everything PR-specific per the OSS/PR split
+table in its README: the runtime + graduation adapters, a brand pack, and the flexible
+services catalog.
+
+- **Brand pack (declarative, not a spawned adapter).** `demo/brand.js` loads
+  `PAC_BRAND_PACK` (else a bundled neutral default at `demo/brand/default/`, so unbranded
+  OSS renders exactly as before), validates fail-fast (unknown keys, non-hex tokens, assets
+  that don't exist or escape the pack directory — all four cases tested live), and exposes
+  `cssVars()`/`t()`/`assetPath()`/`accentPalette()`. Wired into `demo/server.js` (`/brand.css`,
+  `/brand/:asset` routes, `index.html` templating for product name and logo),
+  `demo/definition.js` (deduped the accent palette that was previously hardcoded verbatim at
+  two call sites), and `demo/assurance.js` (report title, ARB diagram colors). The PR pack
+  lives at `pracman/brand/` with the Plymouth Rock Enterprise logo (both fill variants) and
+  documents in `BRAND-NOTES.md` that the brand guide has **no color-palette or typography
+  section** — the tokens are carried over from `apps/ai-portal`, not guide-derived, pending
+  brand-team confirmation. The PR Mark app icon is a placeholder monogram, not extracted from
+  the guide's actual artwork — flagged explicitly for replacement before shipping anywhere
+  user-facing. Known gap: only 4 of `demo/web/style.css`'s ~50 hex literals were tokenized
+  (the ones that are genuinely brand colors, not derived tints); the rest are documented as
+  out of scope for this pass rather than silently left.
+- **Flexible services layer (R6's prerequisite, generalized).** `demo/services.js` replaces
+  the hardcoded `ENV_REF_TYPES = ['postgres','pgvector','objects']` with a loaded catalog
+  (`PAC_SERVICE_CATALOG`, else a bundled default of `postgres`/`objects`, both
+  `local-only`). Each catalog entry has three faces: `local` (container recipe), `binding`
+  (deploykit sentinel token → provisioner result key), and `prod.projection` —
+  `native`/`substituted`/`local-only`, a closed vocabulary. The PR catalog
+  (`pracman/services/catalog.json`) ships **pgvector** and **litellm** (`native` and
+  `substituted` respectively) and a working **mock-api** stub service (`local-only`,
+  `pracman/services/mock-api/`); redis, dynamodb-local and sqlite are catalog entries only
+  (`implemented:false`).
+- **The graduation gate is real and tested (SVC-001 through SVC-005,
+  `test/services-layer.test.js`).** `store.js`'s `graduateApplication` now checks every
+  `envRefs` binding's projection before invoking the adapter: a `local-only` binding blocks
+  with a 409 naming the env var, kind and reason, unless the caller passes
+  `allowLocalOnly:true` (recorded in the audit trail). `demo/assurance.js` surfaces every
+  binding with its projection and caveat as a dossier fact, so the surprise is visible at
+  declare/build time, not just at graduation.
+- **Found and fixed live: `graduateApplication` was unusable for any app-tier app.** It
+  unconditionally called `graduationFiles()`, which by design throws for `tier:'app'`
+  ("use graduate_application instead" — the very function that was calling it). Fixed:
+  app-tier releases now pass an empty file map to the graduation adapter instead (there is
+  nothing for the template/static snapshot format to capture; the adapter's `files` param is
+  optional and only seeds an existing `package.json`). Caught by SVC-004, which would have
+  failed against the pre-fix code.
+- **pgvector prerequisite (previously listed as an open blocker) — resolved.**
+  `bootstrap-sandbox.sh`'s Postgres image is now `${DEPLOYKIT_PG_IMAGE:-pgvector/pgvector:pg16}`
+  instead of the hardcoded `postgres:16-alpine`. This is also documented to fix
+  `deploykit webui-bootstrap` (previously broken: it posts `enable_pgvector:True` against an
+  image lacking the extension, which raises, turns into a 500, and aborts before the admin
+  seed) and to unblock webui's shipped-but-disabled `/api/search` (currently 501). Not yet
+  re-run against a live re-bootstrap to confirm the swap end-to-end — the deploykit pytest
+  suite (12 tests, all still passing) doesn't cover bootstrap-sandbox.sh at all.
+- **Not done this pass, left for later:** deploykit's deeper services-layer generalization
+  (a real `ServiceProvider` ABC mirroring `AuthProvider`, an importable `_PROVISIONERS`
+  registry instead of one rebuilt per deploy, a uniform `extra["services"]` resource ledger
+  so store-provisioned resources actually get deprovisioned on undeploy, new
+  `{{SANDBOX_LITELLM_URL}}`/`{{SANDBOX_MOCKAPI_URL}}` sentinels, health gating that turns
+  today's warn-only waits into real failures). All catalogued in the plan file with exact
+  file/line references; none of it blocks what shipped this pass.
+
+### Built and verified this pass, with a known limitation each
+
+- **Runtime adapter (R1) — done, tested against a local fake server, not yet a live sandbox.**
+  `pracman/adapters/runtime/deploykit/`: `AppSpec` mapping, source materialization
+  (inline static-tier write, app-tier **symlink** so live edits need no re-materialization),
+  the sync-then-fallback-to-deploy optimization deploykit's own client convention documents,
+  and the full REST+SSE client. 34 tests, including 5 real subprocess/HTTP/SSE round trips.
+  **Found and fixed live, not by inspection:** `demo/adapter-host.js` stripped a spawned
+  adapter's environment down to `PATH`/`HOME` — copying `builders.js`'s untrusted-build-worker
+  hardening, which is the wrong trust model for an operator-configured plugin that needs to
+  read its own `DEPLOYKIT_TOKEN`/`DEPLOYKIT_API_URL` from the environment. A real deploy
+  failed silently on this before the fix; now adapters inherit the full parent environment.
+  Symlink-based materialization also only works if the deploykit *container's* own bind
+  mount is broad enough to see wherever the real source lives (verified live: a symlink
+  into `/tmp` was invisible from inside the container even though the host Docker daemon
+  could see it fine) — document this as a deployment-topology requirement, not a code bug.
+- **`app` tier + provenance (R2/R3) — done and tested (16 tests), verified with a real local
+  deploy.** `demo/tree-digest.js` (deterministic sorted-path/per-file-sha256 digest,
+  practical exclude list matching deploykit's own rsync excludes — not a full `.gitignore`
+  parser, a documented limitation) + `definition.js`'s `app` tier (referenced `sourcePath`,
+  validated to exist at `create_application` time, not deferred to build) + `store.js`
+  skipping the Docker/K8s build-worker sandbox entirely for this tier (there's nothing
+  untrusted to isolate at the digest step — the real image build happens later, inside
+  deploykit) + the preview/export routes refusing to treat a `null`-html app-tier release
+  as if it were a static-tier one.
+- **deploykit local-mode nginx bugs (R4, partial) — the two verified bugs are fixed and
+  tested; wrote deploykit's first-ever test suite (12 tests) to prove it.**
+  `sandbox/src/deploykit/proxy/nginx.py`: a missing `nginx` binary raised an uncaught
+  `FileNotFoundError` that escaped `add_route()`'s own `except RuntimeError` handling
+  (container builds/runs/passes health checks, deploy still reports failure, store row
+  stranded); `_reload()`'s `systemctl` attempt raised the same uncaught exception on macOS
+  *before* its own `nginx -s reload` fallback could run. Both fixed by normalizing a missing
+  binary in `_run()`. Added `DEPLOYKIT_READINESS_ENABLED` (default on) so a local instance
+  isn't forced to spawn `claude -p` against a `webui` Postgres database it has no reason to
+  provision. **Not done:** the containerized-nginx + host-port unrepresented combination
+  (no `host.docker.internal` option) — moot as long as full docker-network mode is used, as
+  verified live.
+- **Graduation exporter (Phase 3, prior pass) — unchanged, still green**: `workload.yml` /
+  `image.yml` / `Jenkinsfile` generation for `cloudfront`/`eks`/`lambda`, validated against
+  both vendored schemas and the real `orchestrator validate`/`generate` CLI.
+
+### Verified live this pass (not just unit-tested)
+
+A real local deploykit stack (`deploykit`, `deploykit-nginx`, `deploykit-postgres` — found
+already bootstrapped locally from prior exploration, rebuilt with this pass's fixes) took a
+pacmanager `app`-tier release end to end: `create_application` (real `sourcePath`) →
+`build_application` (tree digest, no sandbox) → `publish_application` → `deploy_application`
+→ the runtime adapter → deploykit's real `POST /api/v1/deploy` → a real `docker build`/
+`docker run` of an nginx-based test app → a real nginx route → **the app's actual HTML,
+served through the full chain at `http://localhost/<path-prefix>/`**. `deployment_status`
+correctly reported `running` with the real container id and URL throughout.
+
 ## Real application generation (this pass)
 
 Added a `tier` field to the application definition (`demo/definition.js`). `tier: 'template'` (the default) is
@@ -54,8 +218,10 @@ image, a real build ran the static-tier Pac-Man source through the `docker run -
 previously-never-run `PAC_TEST_DOCKER=1 node --test test/demo-docker.test.js` integration test was executed and
 passes (uid 10001, read-only root filesystem, no non-internal network interfaces).
 
-Locally verified with Node.js 24.19.0: **23 tests, 22 passing, 1 skipped** (the Docker integration test above is
-skipped by default and only runs with `PAC_TEST_DOCKER=1`; CI runs it). `node scripts/check.js` passes.
+Locally verified with Node.js 24.19.0: **71 tests, 70 passing, 1 skipped** (the Docker integration test above is
+skipped by default and only runs with `PAC_TEST_DOCKER=1`; CI runs it). `node scripts/check.js` passes. This count
+now also includes the plugin-adapter, contract v1alpha2, app-tier and tree-digest tests added in the platform-
+integration pass above; see that section for what they cover.
 
 ## Bounded demo implementation (prior pass)
 

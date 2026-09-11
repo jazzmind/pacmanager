@@ -1,0 +1,44 @@
+{
+  "id": "pac-manager-default",
+  "productName": "PAC Manager",
+  "productShort": "PAC",
+  "organization": "PAC Manager",
+  "tagline": "Your ideas, running.",
+  "tokens": {
+    "brand": "#245e49",
+    "brand-dark": "#286e4b",
+    "accent": "#245e49",
+    "accent-hover": "#286e4b",
+    "surface": "#ffffff",
+    "canvas": "#f6f5f0",
+    "ink": "#203b32",
+    "ink-muted": "#64766d",
+    "line": "#dce2da",
+    "ok": "#376746",
+    "warn": "#a86a1f",
+    "error": "#a83232"
+  },
+  "fonts": {
+    "display": "Inter",
+    "sans": "Inter",
+    "fallback": "ui-sans-serif, system-ui, -apple-system, sans-serif"
+  },
+  "assets": {
+    "logo": "assets/logo.png",
+    "logoMono": "assets/logo.png",
+    "appIcon": "assets/logo.png",
+    "favicon": "assets/logo.png"
+  },
+  "accentChoices": {
+    "teal": "#136f63",
+    "blue": "#245a9e",
+    "plum": "#79476f"
+  },
+  "strings": {
+    "product.name": "PAC Manager",
+    "product.tagline": "Your ideas, running.",
+    "nav.apps": "Applications",
+    "report.arb.title": "Architecture Review Dossier"
+  },
+  "lint": {}
+}
