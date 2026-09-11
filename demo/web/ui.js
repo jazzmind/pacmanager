@@ -11,12 +11,12 @@ async function refresh(){
   if(selected){app=await api('apps/'+selected);draw();}
 }
 function draw(){
-  $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title;$('status').textContent=app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
+  $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title+(app.config.tier==='static'?' · generated app':'');$('status').textContent=app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
   document.querySelectorAll('.owner').forEach(el=>el.hidden=me.kind!=='owner');$('build').disabled=app.build?.status==='building';$('publish').disabled=app.build?.status!=='ready'||app.build.revision!==app.revision;
   $('mode').textContent=app.build?.mode||me.mode;$('logs').innerHTML=(app.build?.logs||[{text:'Save a definition, then build.'}]).map(l=>`<li>${esc(l.text)}</li>`).join('');
   const ready=published?Boolean(app.release):app.build?.status==='ready';const url='/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
   const key=[app.id,published,app.build?.id,app.build?.status,app.release?.number,app.documents.length,app.comments.length,app.binding].join(':');
-  $('preview').hidden=!ready;$('preview-empty').hidden=ready;if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
+  $('preview').hidden=!ready;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
   $('open-preview').href=url;$('open-preview').hidden=!ready;$('preview-label').textContent=published?'Published release · v'+(app.release?.number||'—'):'Draft application preview';$('draft').classList.toggle('selected',!published);$('published').classList.toggle('selected',published);
   docs();$('comments').innerHTML=app.comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><p>${esc(c.text)}</p><small>${esc(new Date(c.createdAt).toLocaleTimeString())}</small></div>`).join('')||'<p>No notes yet. Start the conversation.</p>';
   $('binding-state').textContent=app.binding?'Connected · '+app.claims.length+' synthetic claims':'Not connected';$('bind').disabled=app.binding;$('bind').textContent=app.binding?'Mock service bound ✓':'Bind mock claims';$('export').href='/api/apps/'+app.id+'/export';$('export').hidden=!app.release||me.kind!=='owner';
@@ -29,7 +29,7 @@ $('logout').onclick=action(async()=>{await api('logout',{});location.href='/';})
 $('new').onclick=$('start').onclick=()=>editor(false);$('edit').onclick=()=>editor(true);$('connect').onclick=()=>$('connection').showModal();
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 $('apps').onclick=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
-$('definition-form').onsubmit=action(async()=>{const config={title:$('app-title').value,brief:$('brief').value,template:$('template').value,accent:$('accent').value};const result=editing?await api('apps/'+app.id+'/definition',{config,revision:app.revision}):await api('apps',config);selected=result.id;published=false;$('editor').close();await refresh();toast('Definition saved. Ready to build.');});
+$('definition-form').onsubmit=action(async()=>{const config={title:$('app-title').value,brief:$('brief').value,template:$('template').value,accent:$('accent').value,...(editing&&app.config.tier==='static'?{tier:app.config.tier,source:app.config.source}:{})};const result=editing?await api('apps/'+app.id+'/definition',{config,revision:app.revision}):await api('apps',config);selected=result.id;published=false;$('editor').close();await refresh();toast('Definition saved. Ready to build.');});
 for(const [id,route,message] of [['build','build','Build started. Activity updates below.'],['bind','binding','Mock claims service bound.'],['publish','publish','Published internally. Invite your team from the Team tab.']])$(id).onclick=action(async()=>{await api('apps/'+app.id+'/'+route,{});if(id==='publish')published=true;await refresh();toast(message);});
 $('draft').onclick=()=>{published=false;draw();};$('published').onclick=()=>{published=true;draw();};
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('selected',t===b));});

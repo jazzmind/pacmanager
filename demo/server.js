@@ -5,37 +5,55 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Store,DemoError } from './store.js';
 import { createBuilder } from './builders.js';
-import { render } from './definition.js';
+import { render,injectBriefings } from './definition.js';
 import { graduationBundle } from './archive.js';
 import { assuranceSchema,assuranceRecord,completeness,saveAssurance,reportHtml,reportMarkdown,authoringGuide } from './assurance.js';
 import { createGithubPublisher } from './github-publisher.js';
+import { createRuntimeAdapter } from './runtime-adapter.js';
+import { createGraduationAdapters } from './graduation-adapter.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
+const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:['teal','blue','plum']},tier:{enum:['template','static']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'}};
 const toolsList=[
-  ['list_applications','List your applications',{}],
-  ['create_application','Create a bounded claims or knowledge application',{title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:['teal','blue','plum']}}],
-  ['inspect_application','Read draft, build logs, documents and comments',{id:{type:'string'}}],
-  ['update_application','Update the definition; revision prevents overwriting another edit',{id:{type:'string'},revision:{type:'integer'},title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:['teal','blue','plum']}}],
-  ['build_application','Start a real build, then inspect its status',{id:{type:'string'}}],
-  ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}}],
-  ['publish_application','Publish the current successfully built draft internally',{id:{type:'string'}}],
-  ['graduation_link','Get the authenticated download URL for a published snapshot',{id:{type:'string'}}],
-  ['get_assurance','Read generated architecture, readiness, BOM data and gaps. Managed facts refresh with every published change.',{id:{type:'string'}}],
-  ['get_assurance_schema','Get the structured dossier schema and authoring guidance',{}],
-  ['update_assurance','Save owner-supplied decisions and evidence with revision and release checks. Managed fields regenerate automatically.',{id:{type:'string'},revision:{type:'integer'},release:{type:['integer','null']},data:assuranceSchema}],
-  ['preview_assurance_document','Generate a report from current release data',{id:{type:'string'},kind:{enum:['arb','readiness','bom']}}]
-].map(([name,description,properties])=>({name,description,inputSchema:{type:'object',properties,required:Object.keys(properties),additionalProperties:false}}));
+  ['list_applications','List your applications',{},[]],
+  ['create_application','Create an application. Omit tier (or pass "template") for the bounded claims/knowledge layout. Pass tier "static" with a source file map to author real generated code, such as a playable game — index.html is required; inline the app\'s CSS/JS or split across additional .css/.js/.json/.svg files.',definitionProps,['title','brief','template','accent']],
+  ['inspect_application','Read draft, build logs, documents and comments',{id:{type:'string'}},['id']],
+  ['update_application','Update the definition; revision prevents overwriting another edit. Include tier and source to change or keep generated code — omitting them resets the app to the bounded template tier.',{id:{type:'string'},revision:{type:'integer'},...definitionProps},['id','revision','title','brief','template','accent']],
+  ['build_application','Start a real build, then inspect its status',{id:{type:'string'}},['id']],
+  ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}},['id']],
+  ['publish_application','Publish the current successfully built draft internally',{id:{type:'string'}},['id']],
+  ['graduation_link','Get the authenticated download URL for a published snapshot',{id:{type:'string'}},['id']],
+  ['get_assurance','Read generated architecture, readiness, BOM data and gaps. Managed facts refresh with every published change.',{id:{type:'string'}},['id']],
+  ['get_assurance_schema','Get the structured dossier schema and authoring guidance',{},[]],
+  ['update_assurance','Save owner-supplied decisions and evidence with revision and release checks. Managed fields regenerate automatically.',{id:{type:'string'},revision:{type:'integer'},release:{type:['integer','null']},data:assuranceSchema},['id','revision','release','data']],
+  ['preview_assurance_document','Generate a report from current release data',{id:{type:'string'},kind:{enum:['arb','readiness','bom']}},['id','kind']],
+  ['record_agent_run','Record a completed agent run (for example a news briefing) so a generated app can display it. The agent — typically Claude itself, driven by an agent pack such as PACOS news-briefing — does the actual research and writing; this only stores the typed, evidence-carrying result. Only imitate a named person\'s writing style when their own writing samples were supplied as evidence; otherwise use a neutral voice, and always set label to disclose that.',{id:{type:'string'},agentId:{type:'string'},topic:{type:'string'},text:{type:'string'},sources:{type:'array',items:{type:'string'}},label:{type:'string'}},['id','agentId','topic','text','sources']],
+  ['deploy_application','Deploy the published release to a runtime, via the configured runtime adapter (PAC_RUNTIME_ADAPTER). Fails with a clear error if no adapter is configured — this demo never deploys anywhere on its own.',{id:{type:'string'}},['id']],
+  ['deployment_status','Get live deployment status from the runtime adapter',{id:{type:'string'}},['id']],
+  ['deployment_logs','Get recent deployment logs from the runtime adapter',{id:{type:'string'},tail:{type:'integer'}},['id']],
+  ['undeploy_application','Remove the deployed release via the runtime adapter. Refused unless the current release has been exported first (GET /api/apps/:id/export) — undeploy can permanently delete provisioned data.',{id:{type:'string'}},['id']],
+  ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'}},['id','adapter','target']]
+].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
-export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher()}){
+export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters()}){
   if(!ownerToken||ownerToken.length<32)throw new Error('Owner token must be at least 32 characters');
-  const store=new Store(directory,builder);
+  const store=new Store(directory,builder,runtime,graduationAdapters);
+  // Loopback aliases: 127.0.0.1 and localhost name the same machine at the same port/scheme, and this
+  // server only ever binds to loopback (HOST defaults to 127.0.0.1). Accepting both prevents a confusing
+  // silent 403 when a browser is pointed at "localhost" instead of the exact configured origin.
+  const originAliases=new Set([origin]);
+  try{
+    const u=new URL(origin);
+    if(u.hostname==='127.0.0.1')originAliases.add(`${u.protocol}//localhost${u.port?':'+u.port:''}`);
+    if(u.hostname==='localhost')originAliases.add(`${u.protocol}//127.0.0.1${u.port?':'+u.port:''}`);
+  }catch{}
   const server=http.createServer(async(req,res)=>{
     const json=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
     const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'");
     try{
-      if(req.headers.origin&&req.headers.origin!==origin)throw new DemoError(403,'Origin denied');
+      if(req.headers.origin&&!originAliases.has(req.headers.origin))throw new DemoError(403,'Origin denied');
       const url=new URL(req.url,origin),path=url.pathname;
       if(req.method==='GET'&&path==='/health')return json(200,{ok:true});
       if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css'].includes(path)){
@@ -91,6 +109,12 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'get_assurance_schema':output={schema:assuranceSchema,guide:authoringGuide};break;
               case 'update_assurance':output=saveAssurance(store,principal,a.id,a);break;
               case 'preview_assurance_document':{const record=assuranceRecord(store.access(principal,a.id));output={markdown:reportMarkdown(record,a.kind),preview:origin+'/api/apps/'+a.id+'/reports/'+a.kind,release:record.release,sourceDigest:record.sourceDigest};break;}
+              case 'record_agent_run':output=store.recordBriefing(principal,a.id,a);break;
+              case 'deploy_application':output=await store.deployApplication(principal,a.id);break;
+              case 'deployment_status':output=await store.deploymentStatus(principal,a.id);break;
+              case 'deployment_logs':output=await store.deploymentLogs(principal,a.id,a.tail);break;
+              case 'undeploy_application':output=await store.undeployApplication(principal,a.id);break;
+              case 'graduate_application':{const {id,adapter,...options}=a;output=await store.graduateApplication(principal,id,adapter,options);break;}
               default:throw new DemoError(400,'Unknown tool');
             }
             result={content:[{type:'text',text:JSON.stringify(output)}]};
@@ -129,7 +153,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|documents|comments|binding|publish|invite|export))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|documents|comments|binding|publish|invite|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -137,9 +161,15 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='preview'){
           const result=url.searchParams.get('published')==='1'?app.release?.result:app.build?.status==='ready'?app.build.result:null;
           if(!result)throw new DemoError(409,'Build or publish this application first');
-          res.setHeader('Content-Type','text/html');res.setHeader('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");return res.end(render(result.html,app));
+          const generated=app.config.tier==='static';
+          const scriptSrc=generated&&result.scriptHashes?.length?result.scriptHashes.map(h=>`'sha256-${h}'`).join(' '):"'none'";
+          res.setHeader('Content-Type','text/html');
+          res.setHeader('Content-Security-Policy',`sandbox${generated?' allow-scripts':''}; default-src 'none'; script-src ${scriptSrc}; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`);
+          return res.end(generated?injectBriefings(result.html,app.briefings):render(result.html,app));
         }
-        if(action==='export'){store.access(principal,id,true);if(!app.release)throw new DemoError(409,'Publish first');res.setHeader('Content-Type','application/gzip');res.setHeader('Content-Disposition','attachment; filename="pac-graduation.tar.gz"');return res.end(graduationBundle(app));}
+        if(action==='export'){store.access(principal,id,true);if(!app.release)throw new DemoError(409,'Publish first');const bundle=graduationBundle(app);store.recordExport(principal,id);res.setHeader('Content-Type','application/gzip');res.setHeader('Content-Disposition','attachment; filename="pac-graduation.tar.gz"');return res.end(bundle);}
+        if(action==='deployment-status')return json(200,await store.deploymentStatus(principal,id));
+        if(action==='deployment-logs')return json(200,await store.deploymentLogs(principal,id,Number(url.searchParams.get('tail'))||100));
       }
       if(req.method!=='POST')throw new DemoError(405,'Method not allowed');
       switch(action){
@@ -150,6 +180,9 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'binding':store.bind(principal,id);break;
         case 'publish':store.publish(principal,id);break;
         case 'invite':return json(201,{url:origin+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});
+        case 'deploy':return json(202,await store.deployApplication(principal,id));
+        case 'undeploy':return json(200,await store.undeployApplication(principal,id));
+        case 'graduate':{const {adapter,...options}=body;return json(200,await store.graduateApplication(principal,id,adapter,options));}
         default:throw new DemoError(404,'Not found');
       }
       return json(200,store.view(principal,id));
