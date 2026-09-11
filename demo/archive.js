@@ -16,6 +16,7 @@ export function tar(files){
 }
 export function graduationFiles(app,{includeData=true}={}){
   if(!app.release)throw new Error('Publish before exporting');
+  if(app.config.tier==='app')throw new Error('This standalone export format is for template/static-tier apps only — an app-tier release is a real repository already on disk. Use the graduate_application tool (the devops-platform graduation adapter) instead.');
   const payload={config:app.release.result.config,documents:includeData?app.documents:[],comments:includeData?app.comments:[],binding:includeData&&app.binding,claims:includeData?app.claims:[]};
   const assurance=assuranceRecord(app);
   const files={

@@ -78,6 +78,7 @@ test('DEPLOY-003 deploy calls the runtime adapter with release identity and reco
 test('DEPLOY-004 deployment-status and deployment-logs proxy through the adapter', async t => {
   const calls = [];
   const { server, base, appId } = await published(t, fakeRuntime(calls));
+  await call(base, `/api/apps/${appId}/deploy`, {});
   const status = await get(base, `/api/apps/${appId}/deployment-status`);
   assert.equal(status.status, 200);
   assert.equal(status.data.op, 'status');
@@ -87,9 +88,18 @@ test('DEPLOY-004 deployment-status and deployment-logs proxy through the adapter
   server.close();
 });
 
+test('DEPLOY-004b deployment-status is refused with a clear error before the app has ever been deployed', async t => {
+  const { server, base, appId } = await published(t, fakeRuntime([]));
+  const res = await get(base, `/api/apps/${appId}/deployment-status`);
+  assert.equal(res.status, 404);
+  assert.match(res.data.error, /not been deployed/);
+  server.close();
+});
+
 test('DEPLOY-005 undeploy is refused until the current release has been exported', async t => {
   const calls = [];
   const { server, base, appId } = await published(t, fakeRuntime(calls));
+  await call(base, `/api/apps/${appId}/deploy`, {});
   const refused = await call(base, `/api/apps/${appId}/undeploy`, {});
   assert.equal(refused.status, 409);
   assert.match(refused.data.error, /[Ee]xport/);
@@ -98,12 +108,14 @@ test('DEPLOY-005 undeploy is refused until the current release has been exported
   const allowed = await call(base, `/api/apps/${appId}/undeploy`, {});
   assert.equal(allowed.status, 200);
   assert.equal(calls.filter(c => c.op === 'undeploy').length, 1);
+  assert.equal(calls.find(c => c.op === 'undeploy').args.payload.id, calls.find(c => c.op === 'deploy').args.payload.id, 'undeploy must target the same stable deploy id the original deploy used');
   server.close();
 });
 
 test('DEPLOY-006 undeploy is refused again after a new release makes the prior export stale', async t => {
   const calls = [];
   const { server, base, appId } = await published(t, fakeRuntime(calls));
+  await call(base, `/api/apps/${appId}/deploy`, {});
   await fetch(base + `/api/apps/${appId}/export`, { headers: { Authorization: 'Bearer ' + 'd'.repeat(64) } });
   await call(base, `/api/apps/${appId}/definition`, { config: { ...staticConfig, title: 'Deploy Demo v2' }, revision: 1 });
   await call(base, `/api/apps/${appId}/build`, {});
@@ -111,6 +123,21 @@ test('DEPLOY-006 undeploy is refused again after a new release makes the prior e
   await call(base, `/api/apps/${appId}/publish`, {});
   const res = await call(base, `/api/apps/${appId}/undeploy`, {});
   assert.equal(res.status, 409, 'an export of an older release must not authorize undeploying a newer one');
+  server.close();
+});
+
+test('DEPLOY-012 the deploy id is derived once and stays stable across a later title edit', async t => {
+  const calls = [];
+  const { server, base, appId } = await published(t, fakeRuntime(calls));
+  await call(base, `/api/apps/${appId}/deploy`, {});
+  const firstId = calls.find(c => c.op === 'deploy').args.payload.id;
+  await call(base, `/api/apps/${appId}/definition`, { config: { ...staticConfig, title: 'Renamed Entirely' }, revision: 1 });
+  await call(base, `/api/apps/${appId}/build`, {});
+  await new Promise(r => setTimeout(r, 50));
+  await call(base, `/api/apps/${appId}/publish`, {});
+  await call(base, `/api/apps/${appId}/deploy`, {});
+  const secondId = calls.filter(c => c.op === 'deploy').at(-1).args.payload.id;
+  assert.equal(secondId, firstId, 'a title edit must not repoint status/logs/undeploy at a different deployed app');
   server.close();
 });
 

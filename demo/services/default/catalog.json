@@ -1,0 +1,14 @@
+{
+  "services": [
+    { "kind": "postgres", "implemented": false, "shared": true,
+      "local": { "note": "Bring your own runtime adapter/deploykit config -- OSS ships no default local provisioner.", "health": { "required": false }, "dependsOn": [] },
+      "binding": { "{{SANDBOX_DB_URL}}": "db_url" },
+      "prod": { "projection": "local-only", "resourceType": null, "bindingStyle": null, "requiredFields": [],
+        "caveat": "OSS default catalog has no prod projection. Configure PAC_SERVICE_CATALOG with a real catalog (see pracman/services/catalog.json) before graduating anything bound to this service." } },
+    { "kind": "objects", "implemented": false, "shared": true,
+      "local": { "note": "Bring your own runtime adapter/deploykit config -- OSS ships no default local provisioner.", "health": { "required": false }, "dependsOn": [] },
+      "binding": {},
+      "prod": { "projection": "local-only", "resourceType": null, "bindingStyle": null, "requiredFields": [],
+        "caveat": "OSS default catalog has no prod projection. Configure PAC_SERVICE_CATALOG with a real catalog before graduating anything bound to this service." } }
+  ]
+}
