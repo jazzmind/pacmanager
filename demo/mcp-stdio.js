@@ -1,7 +1,14 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 const base=process.env.PAC_MANAGER_URL||'http://127.0.0.1:3000';
-const token=process.env.PAC_MANAGER_TOKEN||readFileSync(process.env.PAC_TOKEN_FILE||'.pac-demo/owner.token','utf8').trim();
+const defaultTokenFile=new URL('../.pac-demo/owner.token',import.meta.url);
+let token;
+try{
+  token=process.env.PAC_MANAGER_TOKEN||readFileSync(process.env.PAC_TOKEN_FILE||defaultTokenFile,'utf8').trim();
+}catch(error){
+  process.stderr.write(`PAC Manager MCP bridge: could not read the owner token (${error.message}). Set PAC_TOKEN_FILE to an absolute path, or PAC_MANAGER_TOKEN directly, or run "npm run demo" first so the token file exists.\n`);
+  process.exit(1);
+}
 for await(const line of createInterface({input:process.stdin})){
   let message;
   try{
