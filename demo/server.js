@@ -12,6 +12,7 @@ import { createGithubPublisher } from './github-publisher.js';
 import { createRuntimeAdapter } from './runtime-adapter.js';
 import { createGraduationAdapters } from './graduation-adapter.js';
 import { loadBrand } from './brand.js';
+import { principalFromProxyHeaders } from './proxy-auth.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
@@ -51,7 +52,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
   }catch{}
   const server=http.createServer(async(req,res)=>{
     const json=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
-    const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
+    const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'");
     try{
@@ -91,7 +92,12 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       }
       const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
       const sessionToken=bearer||req.headers.cookie?.split('; ').find(c=>c.startsWith('pac_session='))?.slice(12);
-      const principal=equal(bearer,ownerToken)?{kind:'owner',label:'Connected author'}:store.session(sessionToken);
+      // Proxy-header identity (PAC_AUTH_MODE=proxy) is tried first but never overrides an
+      // explicit bearer/session credential -- a CLI/MCP caller presenting the owner token
+      // directly must keep working even when pacmanager also sits behind an authenticating
+      // proxy. See proxy-auth.js for the two independent gates (opt-in mode + shared secret)
+      // that make this fail closed rather than trusting any client-supplied header.
+      const principal=equal(bearer,ownerToken)?{kind:'owner',label:'Connected author'}:(store.session(sessionToken)||principalFromProxyHeaders(req));
       if(!principal)throw new DemoError(401,'Sign in to the workspace');
       if(path==='/mcp'){
         if(req.method!=='POST'){res.setHeader('Allow','POST');return json(405,{error:'Use POST'});}
@@ -141,7 +147,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         }catch(error){if(body.method!=='tools/call')return json(200,{jsonrpc:'2.0',id:body.id,error:{code:-32602,message:error.message}});result={isError:true,content:[{type:'text',text:error.message}]};}
         return json(200,{jsonrpc:'2.0',id:body.id,result});
       }
-      if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,mode:builder.mode});
+      if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:process.env.PAC_AUTH_MODE==='proxy'?'proxy':'local'});
       const report=path.match(/^\/api\/apps\/([a-f0-9-]+)\/reports\/(arb|readiness|bom)$/);
       if(report&&req.method==='GET'){
         const record=assuranceRecord(store.access(principal,report[1])),kind=report[2],format=url.searchParams.get('format')||'html';

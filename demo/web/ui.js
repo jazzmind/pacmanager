@@ -23,9 +23,9 @@ function draw(){
   $('release').textContent=app.release?`Internal release v${app.release.number} · Definition revision ${app.release.revision} · Documents and discussion remain shared. ${app.revision!==app.release.revision?'Unpublished changes in draft.':''}`:'Visible to this workspace only. Publish when your team is ready.';
 }
 function docs(){const q=$('search').value.toLowerCase();$('documents').innerHTML=app.documents.filter(d=>(d.name+' '+d.text).toLowerCase().includes(q)).map(d=>`<div class="document"><strong>▤ ${esc(d.name)}</strong><p>${esc(d.text.slice(0,160)||'PDF attachment · no extracted text')}</p><small>${esc(d.author)} · ${Math.ceil(d.size/1024)} KB</small></div>`).join('')||'<p>No matching documents yet.</p>';}
-async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('new').hidden=me.kind!=='owner';$('connect').hidden=me.kind!=='owner';await refresh();}
+async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('new').hidden=me.kind!=='owner';$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';await refresh();}
 $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').value});$('token').value='';await enter();});
-$('logout').onclick=action(async()=>{await api('logout',{});location.href='/';});
+$('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
 $('new').onclick=$('start').onclick=()=>editor(false);$('edit').onclick=()=>editor(true);$('connect').onclick=()=>$('connection').showModal();
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 $('apps').onclick=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
