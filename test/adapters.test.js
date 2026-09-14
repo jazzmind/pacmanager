@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { envelope, validateResult, RUNTIME_CAPABILITIES } from '../src/adapters.js';
+import { envelope, validateResult, RUNTIME_CAPABILITIES, validateAuthoringOutput } from '../src/adapters.js';
 import { createRuntimeAdapter } from '../demo/runtime-adapter.js';
 import { createGraduationAdapters } from '../demo/graduation-adapter.js';
 
@@ -74,4 +74,19 @@ test('ADAPT-010 graduation adapters parse the name=command list and are empty wh
 
 test('ADAPT-011 malformed PAC_GRADUATION_ADAPTERS entries fail closed at construction time', () => {
   assert.throws(() => createGraduationAdapters({ PAC_GRADUATION_ADAPTERS: 'no-equals-sign' }), /Invalid PAC_GRADUATION_ADAPTERS/);
+});
+
+test('ADAPT-012 validateAuthoringOutput requires a known kind, a model name, and exactly one of source/sourcePath', () => {
+  assert.throws(() => validateAuthoringOutput(null), /must be an object/);
+  assert.throws(() => validateAuthoringOutput({ kind: 'nonsense', model: 'x', source: {} }), /kind must be one of/);
+  assert.throws(() => validateAuthoringOutput({ kind: 'interactive', source: {} }), /model is required/);
+  assert.throws(() => validateAuthoringOutput({ kind: 'interactive', model: 'x' }), /exactly one of source or sourcePath/);
+  assert.throws(() => validateAuthoringOutput({ kind: 'interactive', model: 'x', source: {}, sourcePath: '/tmp/x' }), /exactly one of source or sourcePath/);
+  assert.doesNotThrow(() => validateAuthoringOutput({ kind: 'interactive', model: 'claude-sonnet-5', source: { 'index.html': '<h1>hi</h1>' } }));
+  assert.doesNotThrow(() => validateAuthoringOutput({ kind: 'application', model: 'claude-sonnet-5', sourcePath: '/data/generated/app-1' }));
+});
+
+test('ADAPT-013 validateAuthoringOutput bounds an oversized rationale', () => {
+  assert.throws(() => validateAuthoringOutput({ kind: 'interactive', model: 'x', source: {}, rationale: 'x'.repeat(501) }), /500 characters/);
+  assert.doesNotThrow(() => validateAuthoringOutput({ kind: 'interactive', model: 'x', source: {}, rationale: 'short and fine' }));
 });
