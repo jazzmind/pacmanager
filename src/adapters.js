@@ -7,9 +7,11 @@
  * an adapter's *reply* must never be trusted to assert its own identity fields.
  */
 
-/** The nine operations a runtime adapter must support, mirrored 1:1 from deploykit's
- * DeployBackend interface so an adapter is a thin translation, not a redesign. */
-export const RUNTIME_CAPABILITIES = ['deploy', 'sync', 'undeploy', 'stop', 'start', 'status', 'list', 'logs', 'health'];
+/** The ten operations a runtime adapter must support: nine mirrored 1:1 from deploykit's
+ * DeployBackend interface so an adapter is a thin translation, not a redesign, plus
+ * setAccess (per-app email allowlist — deploykit's PUT /api/v1/access/:app_id) for the
+ * "apps shared with me" sharing model. */
+export const RUNTIME_CAPABILITIES = ['deploy', 'sync', 'undeploy', 'stop', 'start', 'status', 'list', 'logs', 'health', 'setAccess'];
 
 export const GRADUATION_CAPABILITY = 'graduate';
 

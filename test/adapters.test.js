@@ -39,9 +39,9 @@ test('ADAPT-004 runtime adapter round-trips a real operation through a spawned p
   assert.deepEqual(result.output.echoedPayload, { tier: 'static' });
 });
 
-test('ADAPT-005 runtime adapter exposes exactly the 9 canonical capabilities, nothing else callable', () => {
+test('ADAPT-005 runtime adapter exposes exactly the 10 canonical capabilities, nothing else callable', () => {
   const a = adapter();
-  assert.equal(RUNTIME_CAPABILITIES.length, 9);
+  assert.equal(RUNTIME_CAPABILITIES.length, 10);
   for (const op of RUNTIME_CAPABILITIES) assert.equal(typeof a[op], 'function');
   assert.equal(typeof a.destroy_everything, 'undefined');
 });
