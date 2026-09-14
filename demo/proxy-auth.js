@@ -47,5 +47,11 @@ export function principalFromProxyHeaders(req, env = process.env) {
   const email = req.headers['x-forwarded-email'];
   if (typeof email !== 'string' || !email.includes('@')) return null;
   const normalized = email.trim().toLowerCase();
-  return { kind: resolveKind(normalized, env), label: normalized, email: normalized };
+  // `via:'proxy'` marks this principal as having genuinely come from the trusted-header path
+  // (as opposed to the bearer-token or cookie-session paths), so the UI can tell whether
+  // sign-out should hit /oauth2/sign_out (only reachable when oauth2-proxy actually sits in
+  // front) or the local /api/logout -- see server.js's /api/me handler. Found live: reporting
+  // authMode from server-wide config rather than per-principal sent an owner-token session
+  // to /oauth2/sign_out, which 401s because oauth2-proxy isn't running in that deployment.
+  return { kind: resolveKind(normalized, env), label: normalized, email: normalized, via: 'proxy' };
 }

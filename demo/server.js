@@ -76,7 +76,14 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
           content=content
             .replace(/\{\{PAC_PRODUCT_NAME\}\}/g,escape(brand.data.productName||'PAC Manager'))
             .replace(/\{\{PAC_PRODUCT_TAGLINE\}\}/g,escape(brand.t('product.tagline','')))
-            .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
+            // logoMono (not logo): both current consumers of this marker — the login page
+            // (canvas background) and the sidebar (a light surface) — are light backgrounds.
+            // Found live: the white `logo` asset rendered at ~1.1:1 contrast on both,
+            // effectively invisible. If a dark header/sidebar is ever added, that surface
+            // needs its own marker pointing back at `logo` — don't "fix" this again by
+            // recoloring the SVG with a CSS filter, the brand pack's lint.forbidLogoRecolor
+            // rule exists specifically to prevent that.
+            .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logoMono')?`<img class="brand-logo" src="/brand/logoMono" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
           content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.keys(brand.accentPalette()).map(k=>`<option value="${escape(k)}">${escape(brand.accentLabel(k))}</option>`).join(''));
         }
         return res.end(content);
@@ -151,7 +158,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         }catch(error){if(body.method!=='tools/call')return json(200,{jsonrpc:'2.0',id:body.id,error:{code:-32602,message:error.message}});result={isError:true,content:[{type:'text',text:error.message}]};}
         return json(200,{jsonrpc:'2.0',id:body.id,result});
       }
-      if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:process.env.PAC_AUTH_MODE==='proxy'?'proxy':'local'});
+      if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:principal.via==='proxy'?'proxy':'local'});
       const report=path.match(/^\/api\/apps\/([a-f0-9-]+)\/reports\/(arb|readiness|bom)$/);
       if(report&&req.method==='GET'){
         const record=assuranceRecord(store.access(principal,report[1])),kind=report[2],format=url.searchParams.get('format')||'html';
