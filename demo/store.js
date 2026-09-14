@@ -32,18 +32,64 @@ export class Store {
     const token=randomBytes(32).toString('hex');this.state.sessions.push({hash:sha(token),...principal,expires:Date.now()+86400000});this.save();return token;
   }
   session(token){return this.state.sessions.find(s=>s.hash===sha(token||'')&&s.expires>Date.now());}
+  // Three principal kinds now: 'owner' (holds the shared owner token OR an ADMIN_EMAILS
+  // match via proxy-auth -- sees and manages everything, unconditionally); 'user' (an
+  // authenticated tenant member via proxy-auth, scoped to apps they own or apps shared with
+  // their email); 'collaborator' (the pre-existing single-use invite mechanism, scoped to
+  // exactly one appId, unchanged). isAppOwner/isSharedUser both require principal.email,
+  // which only 'user' (and 'owner', for whom it's irrelevant) principals carry -- see
+  // demo/proxy-auth.js.
+  isAppOwner(principal,app){return principal.kind==='user'&&principal.email&&app.ownerEmail&&principal.email===app.ownerEmail;}
+  isSharedWith(principal,app){return principal.kind==='user'&&principal.email&&Array.isArray(app.sharedWith)&&app.sharedWith.includes(principal.email);}
   access(principal,appId,owner=false){
     const app=this.state.apps.find(a=>a.id===appId);
-    if(!app || !principal || (principal.kind!=='owner'&&principal.appId!==app.id))fail(404,'Application not found');
-    if(owner&&principal.kind!=='owner')fail(403,'Only the owner can do this');
+    if(!app||!principal)fail(404,'Application not found');
+    const isAdmin=principal.kind==='owner';
+    const isCollaborator=principal.kind==='collaborator'&&principal.appId===app.id;
+    if(!isAdmin&&!isCollaborator&&!this.isAppOwner(principal,app)&&!this.isSharedWith(principal,app))fail(404,'Application not found');
+    if(owner&&!isAdmin&&!this.isAppOwner(principal,app))fail(403,'Only the owner can do this');
     return app;
   }
-  list(p){return this.state.apps.filter(a=>p.kind==='owner'||a.id===p.appId).map(a=>({id:a.id,config:a.config,revision:a.revision,build:a.build?{status:a.build.status}:null,published:Boolean(a.release),documents:a.documents.length}));}
+  list(p){
+    const isAdmin=p.kind==='owner';
+    return this.state.apps.filter(a=>isAdmin||(p.kind==='collaborator'&&a.id===p.appId)||this.isAppOwner(p,a)||this.isSharedWith(p,a))
+      .map(a=>({id:a.id,config:a.config,revision:a.revision,build:a.build?{status:a.build.status}:null,published:Boolean(a.release),documents:a.documents.length,ownerEmail:a.ownerEmail||null,sharedWith:a.sharedWith||[]}));
+  }
   create(p,config){
-    if(p.kind!=='owner')fail(403,'Owner access required');
+    // Both 'owner' (admin) and 'user' (any authenticated tenant member, via proxy-auth) may
+    // create their own applications; 'collaborator' (a scoped guest on someone else's single
+    // app) may not. An 'owner' principal from the bearer-token path has no email, so its
+    // apps get ownerEmail:null -- admin-visible only, same as before this pass existed.
+    if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
-    const app={id:id(),config:definition(config),revision:1,createdAt:now(),documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,release:null,deployments:[],lastExport:null,audit:[]};
+    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,release:null,deployments:[],lastExport:null,audit:[]};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
+  }
+  // Email-based sharing (distinct from the pre-existing label-based single-use invite
+  // system below, kept for out-of-tenant collaborators). Owner-only; pushes the updated
+  // allowlist to the runtime adapter so a deployed app's nginx route enforces it too --
+  // best-effort: a local-only app (never deployed) has no runtime adapter state to push to.
+  async shareWithEmail(p,appId,email){
+    const app=this.access(p,appId,true);
+    const normalized=(email||'').trim().toLowerCase();
+    if(!normalized.includes('@')||normalized.length>254)fail(400,'Enter a valid email address');
+    app.sharedWith=Array.from(new Set([...(app.sharedWith||[]),normalized]));
+    this.audit(app,'shared with '+normalized,p);this.save();
+    await this.pushAccess(app);
+    return app.sharedWith;
+  }
+  async unshareEmail(p,appId,email){
+    const app=this.access(p,appId,true);
+    const normalized=(email||'').trim().toLowerCase();
+    app.sharedWith=(app.sharedWith||[]).filter(e=>e!==normalized);
+    this.audit(app,'unshared from '+normalized,p);this.save();
+    await this.pushAccess(app);
+    return app.sharedWith;
+  }
+  async pushAccess(app){
+    if(!this.runtime||!app.deployId)return; // never deployed, or no adapter configured -- nothing to enforce at the edge yet
+    try{await this.runtime.setAccess({artifactId:app.id,payload:{id:app.deployId,allowedEmails:app.sharedWith||[]}});}
+    catch(error){/* best-effort: sharing still took effect in pacmanager's own list()/access() even if the edge push failed */}
   }
   audit(app,event,p){app.audit.push({at:now(),event,actor:p.label});app.audit=app.audit.slice(-200);}
   update(p,appId,config,revision){

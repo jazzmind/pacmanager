@@ -35,7 +35,9 @@ const toolsList=[
   ['deployment_status','Get live deployment status from the runtime adapter',{id:{type:'string'}},['id']],
   ['deployment_logs','Get recent deployment logs from the runtime adapter',{id:{type:'string'},tail:{type:'integer'}},['id']],
   ['undeploy_application','Remove the deployed release via the runtime adapter. Refused unless the current release has been exported first (GET /api/apps/:id/export) — undeploy can permanently delete provisioned data.',{id:{type:'string'}},['id']],
-  ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own. Blocked if any declared service binding (envRefs) has no production equivalent (services catalog projection "local-only"), unless allowLocalOnly is set.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'},allowLocalOnly:{type:'boolean'}},['id','adapter','target']]
+  ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own. Blocked if any declared service binding (envRefs) has no production equivalent (services catalog projection "local-only"), unless allowLocalOnly is set.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'},allowLocalOnly:{type:'boolean'}},['id','adapter','target']],
+  ['share_application','Grant a colleague access to this application by email (tenant SSO identity, not the label-based one-time invite). Owner-only. If the application is deployed, also pushes the updated allowlist to the runtime adapter so the deployed URL enforces it.',{id:{type:'string'},email:{type:'string'}},['id','email']],
+  ['unshare_application','Revoke a colleague\'s email-based access to this application. Owner-only.',{id:{type:'string'},email:{type:'string'}},['id','email']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
 export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters()}){
@@ -140,6 +142,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'deployment_logs':output=await store.deploymentLogs(principal,a.id,a.tail);break;
               case 'undeploy_application':output=await store.undeployApplication(principal,a.id);break;
               case 'graduate_application':{const {id,adapter,...options}=a;output=await store.graduateApplication(principal,id,adapter,options);break;}
+              case 'share_application':output={sharedWith:await store.shareWithEmail(principal,a.id,a.email)};break;
+              case 'unshare_application':output={sharedWith:await store.unshareEmail(principal,a.id,a.email)};break;
               default:throw new DemoError(400,'Unknown tool');
             }
             result={content:[{type:'text',text:JSON.stringify(output)}]};
@@ -178,7 +182,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|documents|comments|binding|publish|invite|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -206,6 +210,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'binding':store.bind(principal,id);break;
         case 'publish':store.publish(principal,id);break;
         case 'invite':return json(201,{url:origin+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});
+        case 'share':return json(200,{sharedWith:await store.shareWithEmail(principal,id,body.email)});
+        case 'unshare':return json(200,{sharedWith:await store.unshareEmail(principal,id,body.email)});
         case 'deploy':return json(202,await store.deployApplication(principal,id));
         case 'undeploy':return json(200,await store.undeployApplication(principal,id));
         case 'graduate':{const {adapter,...options}=body;return json(200,await store.graduateApplication(principal,id,adapter,options));}
