@@ -50,6 +50,13 @@ const FORBIDDEN_JS = [
   [/navigator\.sendBeacon/, 'navigator.sendBeacon'],
   [/\bimport\s*\(/, 'dynamic import()'],
 ];
+// Found live (design review, before any model ever wrote a file): the naive /https?:\/\// scan
+// matches xmlns="http://www.w3.org/2000/svg" -- mandatory on any standalone or conventional
+// inline SVG, and demo/assurance.js's own generated ARB diagram uses exactly this attribute.
+// .svg is an *allowed* source extension, so the gate was rejecting the only correct way to
+// write the file type it permits. Strip the handful of standard XML/XHTML/SVG namespace
+// literals before scanning for a real network reference.
+const XML_NAMESPACE_RE = /\bxmlns(?::\w+)?\s*=\s*["'](https?:\/\/(?:www\.w3\.org|www\.w3c\.org)\/[^"']*)["']/gi;
 function staticSafetyIssues(source) {
   const issues = [];
   const js = Object.entries(source).filter(([p]) => p.endsWith('.js')).map(([, t]) => t).join('\n');
@@ -57,8 +64,31 @@ function staticSafetyIssues(source) {
   for (const [re, label] of FORBIDDEN_JS) if (re.test(js)) issues.push(label);
   if (/<\/script/i.test(all)) issues.push('a "</script" sequence in source (would break the generated document)');
   if (/<\/style/i.test(all)) issues.push('a "</style" sequence in source (would break the generated document)');
-  if (/https?:\/\//i.test(all)) issues.push('an external (http/https) reference — generated apps cannot reach the network');
+  if (/https?:\/\//i.test(all.replace(XML_NAMESPACE_RE, ''))) issues.push('an external (http/https) reference — generated apps cannot reach the network');
   return issues;
+}
+
+/** Machine-readable form of the same limits, for an authoring adapter's prompt so the model is
+ * told the exact rules up front instead of discovering them one repair attempt at a time -- and
+ * so the prompt and the gate can never drift apart, since both read these same constants. */
+export const SOURCE_LIMITS = {
+  maxFiles: MAX_SOURCE_FILES,
+  maxBytes: MAX_SOURCE_BYTES,
+  extensions: ['.html', '.css', '.js', '.json', '.svg'],
+  requiredFiles: ['index.html'],
+};
+export const FORBIDDEN_LABELS = FORBIDDEN_JS.map(([, label]) => label);
+
+/** Non-throwing form of validateSource+staticSafetyIssues, collecting every problem instead of
+ * stopping at the first one -- an authoring adapter's repair prompt needs the complete list, not
+ * one issue per attempt. Never touches the filesystem; pure. */
+export function sourceIssues(source) {
+  try {
+    const clean = validateSource(source);
+    return staticSafetyIssues(clean);
+  } catch (e) {
+    return [e.message];
+  }
 }
 
 function compileStatic(config) {
@@ -76,7 +106,11 @@ function compileStatic(config) {
   const canonicalSource = Object.fromEntries(files.map(p => [p, source[p]]));
   return {
     config, html,
-    sourceDigest: sha(JSON.stringify({ title, brief: config.brief, template: config.template, accent: accentKey, tier: 'static', source: canonicalSource })),
+    // `kind` is appended AFTER the original field list, not interleaved -- a legacy record has
+    // no `kind` (undefined), and JSON.stringify drops undefined object properties entirely, so
+    // this produces a byte-identical digest to before `kind` existed. Only a new kind-based
+    // record's digest actually includes it. See definition()'s identical ordering discipline.
+    sourceDigest: sha(JSON.stringify({ title, brief: config.brief, template: config.template, accent: accentKey, tier: 'static', source: canonicalSource, kind: config.kind })),
     htmlDigest: sha(html),
     scriptHashes: [csphash(scriptBlock)],
     checks: [
@@ -158,19 +192,44 @@ function compileApp(config) {
   };
 }
 
+// Real artifact types a user picks (replacing the "claims"/"knowledge" template choice, which
+// changed exactly one word of output -- see docs/implementation-status.md). 'classic' is the
+// legacy template-tier layout, MCP-reachable but not offered in the browser's artifact-type
+// picker. `auto` is a discriminator the model resolves at generation time, not a fifth shape.
+export const KINDS = ['interactive', 'knowledge', 'application', 'auto', 'classic'];
+export const effectiveKind = config => config.kind ?? 'classic';
+
 export function definition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Application definition required');
   const tier = value.tier || 'template';
-  if (!['template', 'static', 'app'].includes(tier)) throw new Error('tier must be template, static or app');
-  const allowed = ['title', 'brief', 'template', 'accent', 'tier',
+  if (!['template', 'static', 'app', 'intent'].includes(tier)) throw new Error('tier must be template, static, app or intent');
+  const hasKind = value.kind !== undefined;
+  if (hasKind && !KINDS.includes(value.kind)) throw new Error(`kind must be one of: ${KINDS.filter(k => k !== 'classic').join(', ')}`);
+  // tier "intent" is a definition that has been created but not yet generated -- it exists so
+  // "no source yet" is a real, valid, compile()-refusing state instead of a template silently
+  // standing in for it. Only meaningful for a kind-based record: a legacy template-only record
+  // has nothing to generate, so it must go straight to a real tier.
+  if (tier === 'intent' && !hasKind) throw new Error('tier "intent" requires kind');
+  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier',
     ...(tier === 'static' ? ['source'] : []),
     ...(tier === 'app' ? APP_TIER_FIELDS : [])];
   for (const k of Object.keys(value)) if (!allowed.includes(k)) throw new Error(`Unsupported definition field: ${k}`);
   if (typeof value.title !== 'string' || value.title.trim().length < 3 || value.title.length > 80) throw new Error('Title must be 3–80 characters');
   if (typeof value.brief !== 'string' || value.brief.length < 10 || value.brief.length > 3000) throw new Error('Brief must be 10–3000 characters');
-  if (!['claims', 'knowledge'].includes(value.template)) throw new Error('Choose claims or knowledge template');
+  // Dual-accept, absent-means-classic: a new-style record supplies `kind` and never stores
+  // `template`; a legacy record has no `kind` and must still supply the original two-value
+  // `template`. No data migration -- existing app records and every fixture that predates
+  // `kind` keep validating, and keep their exact sourceDigest (see the field-ordering
+  // discipline below and in compileStatic's digest).
+  if (!hasKind && !['claims', 'knowledge'].includes(value.template)) throw new Error('Choose claims or knowledge template');
   if (!Object.keys(accentPalette()).includes(value.accent)) throw new Error(`Choose one of: ${Object.keys(accentPalette()).join(', ')}`);
+  // `template` stays in its original position in the object literal (even when undefined for a
+  // kind-based record) and `kind` is only ever appended after -- JSON.stringify drops
+  // undefined-valued properties entirely, so a legacy record's key order and digest are exactly
+  // as they were before `kind` existed. Interleaving these two fields would shift key order for
+  // every existing record and silently invalidate its sourceDigest.
   const result = { title: value.title.trim(), brief: value.brief, template: value.template, accent: value.accent, tier };
+  if (hasKind) result.kind = value.kind;
   if (tier === 'static') result.source = validateSource(value.source);
   if (tier === 'app') Object.assign(result, validateAppFields(value));
   return result;
@@ -178,6 +237,11 @@ export function definition(value) {
 
 export function compile(input) {
   const config = definition(input);
+  // Defense in depth: store.js's startBuild() is the primary guard (a clearer 409 before ever
+  // reaching the sandbox), but compile() itself must also refuse -- it's called directly by
+  // the byte-identical verification path too, and "no source yet" must never fall through to
+  // silently compiling as if it were a template. There is no template to fall back to.
+  if (config.tier === 'intent') throw new Error('This artifact has not been generated yet. Generate it before building.');
   if (config.tier === 'app') return compileApp(config);
   if (config.tier === 'static') return compileStatic(config);
   const accent = accentPalette()[config.accent];
