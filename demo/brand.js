@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const DEFAULT_PACK_DIR = resolve(dirname(fileURLToPath(import.meta.url)), 'brand', 'default');
 const HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?$/;
-const ALLOWED_TOP = new Set(['id', 'productName', 'productShort', 'organization', 'tagline', 'tokens', 'fonts', 'assets', 'accentChoices', 'strings', 'lint']);
+const ALLOWED_TOP = new Set(['id', 'productName', 'productShort', 'organization', 'tagline', 'tokens', 'fonts', 'assets', 'accentChoices', 'accentLabels', 'strings', 'lint']);
 
 function validate(dir, data) {
   for (const key of Object.keys(data)) {
@@ -70,6 +70,11 @@ export function loadBrand(packDir = process.env.PAC_BRAND_PACK) {
      * previously-duplicated {teal,blue,plum} literals in definition.js (lines 60 and 171). */
     accentPalette() {
       return data.accentChoices || {};
+    },
+    /** Human-readable label for an accent key, for the create/edit form's <select> — falls
+     * back to a capitalized key so a pack that only supplies accentChoices still renders. */
+    accentLabel(key) {
+      return (data.accentLabels && data.accentLabels[key]) || key.charAt(0).toUpperCase() + key.slice(1);
     },
   };
 }

@@ -4,7 +4,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
 async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
-function editor(isEdit){editing=isEdit;$('app-title').value=isEdit?app.config.title:'';$('brief').value=isEdit?app.config.brief:'';$('template').value=isEdit?app.config.template:'claims';$('accent').value=isEdit?app.config.accent:'teal';$('editor').showModal();}
+function editor(isEdit){editing=isEdit;$('app-title').value=isEdit?app.config.title:'';$('brief').value=isEdit?app.config.brief:'';$('template').value=isEdit?app.config.template:'claims';$('accent').value=isEdit?app.config.accent:$('accent').options[0]?.value;$('editor').showModal();}
 async function refresh(){
   apps=await api('apps');$('apps').innerHTML=apps.map(a=>`<button data-app="${a.id}" class="${a.id===selected?'active':''}">${esc(a.config.title)}<small>${a.published?'Published':a.build?.status||'Draft'} · ${a.documents} documents</small></button>`).join('');
   if(!selected&&apps.length)selected=apps[0].id;

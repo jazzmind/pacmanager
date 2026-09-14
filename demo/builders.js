@@ -9,9 +9,21 @@ export function dockerArgs(image, name) {
     '--security-opt=no-new-privileges','--user=10001:10001','--memory=128m','--memory-swap=128m',
     '--cpus=0.5','--pids-limit=32','--tmpfs=/tmp:rw,noexec,nosuid,size=8m','-i',image];
 }
+// PAC_BRAND_PACK/PAC_SERVICE_CATALOG are passed through despite this being the untrusted-build-
+// worker environment allowlist: they are operator-installed local filesystem paths to non-secret
+// config (logos, tokens, a service catalog), not app-authored input and not a credential -- the
+// same reasoning adapter-host.js already documents for why *its* env isn't stripped. Without this,
+// build-worker.js's own compile() re-validates the definition against a *different* brand pack
+// than the one the app was created under (this process's own PAC_BRAND_PACK is legitimately
+// absent from the child by default), so an accent key valid under a custom pack fails build every
+// time. Found live: creating an app with accent:'brand' under the PR pack built successfully in
+// the main process, then failed in the worker with "Choose one of: teal, blue, plum" -- the
+// bundled default pack's keys, because the worker never saw PAC_BRAND_PACK at all.
+// NOTE: this only fixes PAC_BUILD_MODE=process. Docker/Kubernetes build modes are still isolated
+// from the brand pack by design (--network=none, no mounts) -- see docs/implementation-status.md.
 function command(executable,args,input) {
   return new Promise((resolve,reject)=>{
-    const child=spawn(executable,args,{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,HOME:process.env.HOME,DOCKER_HOST:process.env.DOCKER_HOST,DOCKER_CONFIG:process.env.DOCKER_CONFIG}});
+    const child=spawn(executable,args,{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,HOME:process.env.HOME,DOCKER_HOST:process.env.DOCKER_HOST,DOCKER_CONFIG:process.env.DOCKER_CONFIG,PAC_BRAND_PACK:process.env.PAC_BRAND_PACK,PAC_SERVICE_CATALOG:process.env.PAC_SERVICE_CATALOG}});
     let output='',error=''; const timer=setTimeout(()=>{child.kill('SIGKILL');reject(new Error('Build timed out'));},30000);
     child.stdout.on('data',b=>{output+=b;if(output.length>1000000){child.kill();reject(new Error('Build output too large'));}});
     child.stderr.on('data',b=>{error=(error+b).slice(-4000);});
