@@ -1,8 +1,12 @@
-import { mkdirSync,readFileSync,writeFileSync,renameSync,existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync,readFileSync,writeFileSync,renameSync,existsSync,realpathSync } from 'node:fs';
+import { join,sep } from 'node:path';
 import { randomUUID,randomBytes } from 'node:crypto';
-import { definition,sha,compile,serviceCatalog } from './definition.js';
+import { definition,sha,compile,serviceCatalog,sourceIssues,SOURCE_LIMITS,FORBIDDEN_LABELS } from './definition.js';
 import { graduationFiles } from './archive.js';
+import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
+
+const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
+const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATTEMPTS||3));
 
 export class DemoError extends Error {constructor(status,message){super(message);this.status=status;}}
 const fail=(status,message)=>{throw new DemoError(status,message);};
@@ -18,12 +22,14 @@ const slugify=(title,appId)=>{
   return prefixed+'-'+appId.slice(0,6);
 };
 export class Store {
-  constructor(directory,builder,runtime=null,graduationAdapters=new Map()){
-    mkdirSync(directory,{recursive:true,mode:0o700});this.file=join(directory,'state.json');this.builder=builder;this.runtime=runtime;this.graduationAdapters=graduationAdapters;
+  constructor(directory,builder,runtime=null,graduationAdapters=new Map(),authoring=null){
+    mkdirSync(directory,{recursive:true,mode:0o700});this.file=join(directory,'state.json');this.dataDir=directory;this.builder=builder;this.runtime=runtime;this.graduationAdapters=graduationAdapters;this.authoring=authoring;
     this.state=existsSync(this.file)?JSON.parse(readFileSync(this.file,'utf8')):{version:1,apps:[],sessions:[],invites:[]};
     for(const app of this.state.apps)if(app.build?.status==='building'){app.build.status='failed';app.build.logs.push({at:now(),text:'Server restarted during build. Retry the build.'});}
+    for(const app of this.state.apps)if(app.generation?.status==='generating'){app.generation.status='failed';app.generation.logs.push({at:now(),text:'Server restarted during generation. Retry.'});}
     for(const app of this.state.apps)if(!app.deployments)app.deployments=[];
-    this.save();this.running=0;
+    for(const app of this.state.apps)if(app.generation===undefined)app.generation=null;
+    this.save();this.running=0;this.generating=0;this._authoringCache=null;
   }
   save(){writeFileSync(this.file+'.tmp',JSON.stringify(this.state),{mode:0o600});renameSync(this.file+'.tmp',this.file);}
   tokenSession(principal){
@@ -62,7 +68,7 @@ export class Store {
     // apps get ownerEmail:null -- admin-visible only, same as before this pass existed.
     if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
-    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,release:null,deployments:[],lastExport:null,audit:[]};
+    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[]};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
   }
   // Email-based sharing (distinct from the pre-existing label-based single-use invite
@@ -98,6 +104,8 @@ export class Store {
   }
   startBuild(p,appId){
     const app=this.access(p,appId,true);if(app.build?.status==='building')fail(409,'Build already running');
+    if(app.config.tier==='intent')fail(409,'Generate this artifact before building it.');
+    if(app.generation?.status==='generating')fail(409,'Generation is still running. Wait for it to finish before building.');
     if(this.running>=2)fail(429,'Two builds are already running');
     const config=structuredClone(app.config),revision=app.revision,job=id();
     // tier "app" attests a referenced source tree already on disk — there is nothing
@@ -119,6 +127,103 @@ export class Store {
       app.build.result=expected;app.build.status='ready';app.build.logs.push({at:now(),text:'Controller verified builder output against the definition.'},{at:now(),text:'Preview ready. Build '+result.sourceDigest.slice(0,12)});
     }).catch(error=>{app.build.status='failed';app.build.logs.push({at:now(),text:error.message.slice(0,1000)});}).finally(()=>{this.running--;this.save();});
     return {id:job,status:'building'};
+  }
+  requireAuthoring(){if(!this.authoring)fail(501,'No authoring adapter configured. Set PAC_AUTHORING_ADAPTER to enable generation.');return this.authoring;}
+  /** Cached capability probe for GET /api/me — never calls the model, and never awaits a live
+   * probe if any cached value (even stale) already exists, so /api/me can't hang a page load
+   * on a gateway round trip. First-ever call (no cache yet) does wait once, bounded by the
+   * adapter's own short probe timeout. Invalidated eagerly by startGeneration() on a real
+   * transport/credential failure, so the UI doesn't have to wait out the TTL to learn that. */
+  async authoringStatus(){
+    if(!this.authoring)return {available:false,state:'not_configured',detail:'No authoring adapter configured. Set PAC_AUTHORING_ADAPTER to enable generation.',kinds:[],model:null,checkedAt:null};
+    const cached=this._authoringCache;
+    if(cached&&Date.now()-cached.at<AUTHORING_PROBE_TTL_MS)return cached.value;
+    const refresh=async()=>{
+      let value;
+      try{
+        const result=await this.authoring.probe();
+        value=result.status==='error'
+          ?{available:false,state:/credential|401|403|unauthoriz/i.test(result.message||'')?'credential_missing':'gateway_unreachable',detail:result.message,kinds:AUTHORING_KINDS,model:null,checkedAt:now()}
+          :{available:true,state:'ready',detail:null,kinds:AUTHORING_KINDS,model:result.output?.model||null,checkedAt:now()};
+      }catch(error){
+        value={available:false,state:'gateway_unreachable',detail:error.message,kinds:AUTHORING_KINDS,model:null,checkedAt:now()};
+      }
+      this._authoringCache={at:Date.now(),value};
+      return value;
+    };
+    if(cached){refresh();return cached.value;} // stale-but-return; refresh in the background
+    return refresh(); // nothing cached yet — wait once, bounded by the adapter's probe timeout
+  }
+  /** Real AI generation (see docs/implementation-status.md's generation design). A separate,
+   * earlier lifecycle stage from startBuild() — NOT a branch inside it — because build's
+   * entire contract is "run the builder, then require byte-identical re-derivation", and a
+   * nondeterministic model call has no place inside that. This writes config.source (or, for
+   * an "application" artifact, config.sourcePath) through definition() — never by hand-merging
+   * fields — and bumps app.revision exactly once, on success only, which is what makes the
+   * existing publish guard (build.revision!==app.revision) correctly block publishing a stale
+   * build after a regenerate, for free. */
+  async startGeneration(p,appId){
+    const app=this.access(p,appId,true);
+    const authoring=this.requireAuthoring();
+    if(app.generation?.status==='generating')fail(409,'Generation already running');
+    if(app.build?.status==='building')fail(409,'Wait for the current build to finish before regenerating');
+    if(this.generating>=2)fail(429,'Two generations are already running');
+    if(!app.config.kind)fail(409,'This application has no artifact kind to generate — it is a classic template-tier app.');
+    const kind=app.config.kind,job=id();
+    this.generating++;
+    app.generation={id:job,status:'generating',requestedAtRevision:app.revision,attempts:[],logs:[{at:now(),text:`Requested generation · ${kind} · ${authoring.mode}`}]};
+    this.save();
+    const workdir=(kind==='application'||kind==='auto')?join(this.dataDir,'generated',app.id):null;
+    if(workdir)mkdirSync(workdir,{recursive:true,mode:0o700});
+    this.lastGeneration=(async()=>{
+      let previousAttempt=null,lastIssues=[];
+      for(let n=1;n<=AUTHORING_MAX_ATTEMPTS;n++){
+        const startedAt=Date.now();
+        const reject=(text,invalidateCache)=>{app.generation.attempts.push({n,issues:lastIssues});app.generation.logs.push({at:now(),text:`Attempt ${n}/${AUTHORING_MAX_ATTEMPTS}: ${text}`});if(invalidateCache)this._authoringCache=null;this.save();};
+        let result;
+        try{
+          result=await authoring.generate({artifactId:app.id,principalId:p.label,payload:{
+            kind,title:app.config.title,brief:app.config.brief,accent:app.config.accent,
+            attempt:n,maxAttempts:AUTHORING_MAX_ATTEMPTS,
+            constraints:{...SOURCE_LIMITS,forbidden:FORBIDDEN_LABELS,requireBriefingsMarker:kind==='knowledge'},
+            workdir,previousAttempt,
+          }});
+        }catch(error){lastIssues=[error.message];reject(`failed to reach the authoring adapter: ${error.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
+        if(result.status==='error'){lastIssues=[result.message];reject(`failed: ${result.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
+        let output;
+        try{output=validateAuthoringOutput(result.output);}
+        catch(error){lastIssues=[error.message];previousAttempt={source:result.output?.source,issues:lastIssues};reject(`rejected: ${error.message}`);continue;}
+        if(kind==='auto'&&!output.rationale){lastIssues=['auto kind requires a rationale explaining the chosen type'];previousAttempt={source:output.source,issues:lastIssues};reject('rejected: '+lastIssues[0]);continue;}
+        if(kind==='knowledge'&&output.source&&!Object.values(output.source).some(t=>t.includes('<!--PAC-BRIEFINGS-->'))){lastIssues=['a knowledge artifact must include <!--PAC-BRIEFINGS--> in index.html so recorded agent runs render'];previousAttempt={source:output.source,issues:lastIssues};reject('rejected: '+lastIssues[0]);continue;}
+        if(output.source){
+          const issues=sourceIssues(output.source);
+          if(issues.length){lastIssues=issues;previousAttempt={source:output.source,issues};reject('rejected by the safety gate: '+issues.join('; '));continue;}
+        }
+        let sourcePath=null;
+        if(output.sourcePath){
+          try{
+            const real=realpathSync(output.sourcePath),realWorkdir=realpathSync(workdir);
+            if(real!==realWorkdir&&!real.startsWith(realWorkdir+sep))throw new Error('sourcePath escapes the workdir it was given');
+            sourcePath=real;
+          }catch(error){lastIssues=[error.message];reject(`${error.message} — not retried (adapter containment violation, not a model mistake)`,true);app.generation.status='failed';this.save();return;}
+        }
+        try{
+          const newConfig={title:app.config.title,brief:app.config.brief,kind:output.kind,accent:app.config.accent,tier:sourcePath?'app':'static'};
+          if(sourcePath)newConfig.sourcePath=sourcePath;else newConfig.source=output.source;
+          app.config=definition(newConfig);
+          app.revision++;
+          app.generation.status='ready';app.generation.revision=app.revision;app.generation.model=output.model;app.generation.rationale=output.rationale||null;
+          app.generation.logs.push({at:now(),text:`Attempt ${n}/${AUTHORING_MAX_ATTEMPTS} accepted · ${output.model} · ${Date.now()-startedAt}ms. Definition revision ${app.revision}.`});
+          this.audit(app,`generated (${output.kind}, ${output.model})${output.rationale?': '+output.rationale.slice(0,200):''}`,p);
+          this.save();
+          return;
+        }catch(error){lastIssues=[error.message];previousAttempt={source:output.source,issues:lastIssues};reject('rejected: '+error.message);continue;}
+      }
+      app.generation.status='failed';
+      app.generation.logs.push({at:now(),text:`Generation failed after ${AUTHORING_MAX_ATTEMPTS} attempts.${lastIssues.length?' Last problem: '+lastIssues.join('; ')+'.':''} Nothing was saved — this artifact is still ungenerated.`});
+      this.save();
+    })().finally(()=>{this.generating--;});
+    return {id:job,status:'generating'};
   }
   upload(p,appId,input){
     const app=this.access(p,appId);
@@ -212,5 +317,10 @@ export class Store {
   }
   invite(p,appId,label){const app=this.access(p,appId,true);if(typeof label!=='string'||label.trim().length<2||label.length>50)fail(400,'Enter a colleague’s display name');this.state.invites=this.state.invites.filter(i=>!i.used&&i.expires>Date.now());if(this.state.invites.length>=100)fail(429,'Invite limit reached');const token=randomBytes(32).toString('hex');this.state.invites.push({hash:sha(token),appId,label:label.trim(),expires:Date.now()+3600000,used:false});this.audit(app,'collaborator invitation created',p);this.save();return token;}
   accept(token){const i=this.state.invites.find(i=>i.hash===sha(token||'')&&!i.used&&i.expires>Date.now());if(!i)fail(401,'Invalid or expired access token');const session=this.tokenSession({kind:'collaborator',appId:i.appId,label:i.label});i.used=true;this.save();return session;}
-  view(p,appId){const app=this.access(p,appId);return {...app,documents:app.documents.map(({base64,...doc})=>doc),build:app.build?{...app.build,result:app.build.result?{sourceDigest:app.build.result.sourceDigest,checks:app.build.result.checks}:null}:null,release:app.release?{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision}:null};}
+  view(p,appId){const app=this.access(p,appId);return {...app,documents:app.documents.map(({base64,...doc})=>doc),build:app.build?{...app.build,result:app.build.result?{sourceDigest:app.build.result.sourceDigest,checks:app.build.result.checks}:null}:null,
+    // Explicit reshape, not a blind spread — attempts/logs never carry raw model output
+    // (source text) today, only issue-string lists and counts, but this is the seam that
+    // stops that changing silently as the generation object grows.
+    generation:app.generation?{status:app.generation.status,requestedAtRevision:app.generation.requestedAtRevision,revision:app.generation.revision||null,model:app.generation.model||null,rationale:app.generation.rationale||null,attempts:app.generation.attempts,logs:app.generation.logs}:null,
+    release:app.release?{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision}:null};}
 }
