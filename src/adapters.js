@@ -15,6 +15,47 @@ export const RUNTIME_CAPABILITIES = ['deploy', 'sync', 'undeploy', 'stop', 'star
 
 export const GRADUATION_CAPABILITY = 'graduate';
 
+/** Authoring capability — new, and genuinely new: docs/plugins.md's "authoring adapter" line
+ * describes a *transport* adapter (MCP/CLI/API mapping onto the control plane), not a
+ * generator. This is the first plugin type that turns a brief into real source, via an
+ * out-of-process model call — see demo/authoring-adapter.js and
+ * docs/implementation-status.md's generation design. */
+export const AUTHORING_CAPABILITY = 'authoring';
+export const AUTHORING_OPERATIONS = ['generate', 'probe'];
+/** The four user-facing artifact kinds an authoring request may name. 'classic' (the legacy
+ * template layout) is never generated — it has no source to produce — so it is deliberately
+ * excluded here even though demo/definition.js's KINDS includes it for validation purposes. */
+export const AUTHORING_KINDS = ['interactive', 'knowledge', 'application', 'auto'];
+
+/** Validate a 'generate' operation's output shape. Pure — no filesystem access; the caller
+ * (demo/store.js) is responsible for containment-checking `sourcePath` against the workdir it
+ * handed the adapter, since that check requires touching the filesystem (realpathSync) and
+ * this module is deliberately kept pure, matching validateResult()'s own contract above. */
+export function validateAuthoringOutput(output) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) throw new Error('Authoring output must be an object');
+  if (typeof output.kind !== 'string' || !AUTHORING_KINDS.includes(output.kind)) {
+    throw new Error(`Authoring output.kind must be one of: ${AUTHORING_KINDS.join(', ')}`);
+  }
+  if (typeof output.model !== 'string' || !output.model) throw new Error('Authoring output.model is required');
+  const hasSource = output.source !== undefined;
+  const hasSourcePath = output.sourcePath !== undefined;
+  if (hasSource === hasSourcePath) throw new Error('Authoring output must set exactly one of source or sourcePath');
+  if (hasSource && (typeof output.source !== 'object' || output.source === null || Array.isArray(output.source))) {
+    throw new Error('Authoring output.source must be an object mapping file path to text content');
+  }
+  if (hasSourcePath && (typeof output.sourcePath !== 'string' || !output.sourcePath)) {
+    throw new Error('Authoring output.sourcePath must be a non-empty string');
+  }
+  if (output.rationale !== undefined && (typeof output.rationale !== 'string' || output.rationale.length > 500)) {
+    throw new Error('Authoring output.rationale must be a string of 500 characters or fewer');
+  }
+  // NOTE: "rationale is required when the request's kind was 'auto'" is enforced by the
+  // caller (demo/store.js), not here — this validator only ever sees output.kind, which is
+  // the model's *chosen* concrete kind (never the literal 'auto'), so it has no way to know
+  // what was originally requested.
+  return output;
+}
+
 export function envelope({ requestId, artifactId, releaseDigest, principalId, capability, operation, payload, deadline }) {
   if (typeof requestId !== 'string' || !requestId) throw new Error('envelope requestId required');
   if (typeof capability !== 'string' || !capability) throw new Error('envelope capability required');
