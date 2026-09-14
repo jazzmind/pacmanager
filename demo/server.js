@@ -74,6 +74,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
             .replace(/\{\{PAC_PRODUCT_NAME\}\}/g,escape(brand.data.productName||'PAC Manager'))
             .replace(/\{\{PAC_PRODUCT_TAGLINE\}\}/g,escape(brand.t('product.tagline','')))
             .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
+          content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.keys(brand.accentPalette()).map(k=>`<option value="${escape(k)}">${escape(brand.accentLabel(k))}</option>`).join(''));
         }
         return res.end(content);
       }

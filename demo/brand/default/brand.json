@@ -40,5 +40,10 @@
     "nav.apps": "Applications",
     "report.arb.title": "Architecture Review Dossier"
   },
-  "lint": {}
+  "lint": {},
+  "accentLabels": {
+    "teal": "Forest",
+    "blue": "Ocean",
+    "plum": "Plum"
+  }
 }
