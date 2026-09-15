@@ -196,7 +196,19 @@ export class Store {
             workdir,previousAttempt,
           }});
         }catch(error){lastIssues=[error.message];reject(`failed to reach the authoring adapter: ${error.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
-        if(result.status==='error'){lastIssues=[result.message];reject(`failed: ${result.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
+        // An adapter-reported error is usually a transport/credential problem (broken gateway,
+        // missing key) that won't change between attempts -- hard-fail immediately rather than
+        // burn the retry budget hitting the same dead thing 3 times. But found live: a model
+        // that returns malformed JSON is ALSO reported this way by the authoring adapter
+        // (parsing/shaping the model's own reply is squarely the adapter's job, not
+        // validateAuthoringOutput's), and that failure mode is exactly what the repair loop
+        // exists for -- it's the model's mistake, not the gateway's. The adapter marks which
+        // kind of failure it is via `retriable`; only a genuinely non-retriable one skips ahead.
+        if(result.status==='error'){
+          lastIssues=[result.message];
+          if(!result.retriable){reject(`failed: ${result.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
+          previousAttempt={issues:lastIssues};reject('rejected: '+result.message.slice(0,300));continue;
+        }
         let output;
         try{output=validateAuthoringOutput(result.output);}
         catch(error){lastIssues=[error.message];previousAttempt={source:result.output?.source,issues:lastIssues};reject(`rejected: ${error.message}`);continue;}
