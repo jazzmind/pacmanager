@@ -116,6 +116,32 @@ test('GEN-106 regenerating after a publish makes the prior release stale — the
   assert.throws(() => store.publish(owner, app.id), /Build the current draft before publishing/);
 });
 
+test('GEN-111 an adapter-reported error marked retriable (e.g. the model\'s own reply was malformed JSON) is repaired on retry, not hard-failed immediately', async t => {
+  const authoring = fakeAuthoring([
+    { status: 'error', message: 'Model reply was not valid JSON: Bad control character in string literal', retriable: true },
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>hi</h1>' } } },
+  ]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  assert.equal(app.generation.status, 'ready');
+  assert.equal(app.generation.attempts.length, 1);
+  assert.ok(app.generation.attempts[0].issues[0].includes('Bad control character'));
+  assert.equal(authoring.calls.length, 2); // it really did retry
+});
+
+test('GEN-112 an adapter-reported error NOT marked retriable (e.g. a broken credential) hard-fails immediately, without wasting the repair budget on a dead gateway', async t => {
+  const authoring = fakeAuthoring([{ status: 'error', message: 'litellm 401: Missing Anthropic API Key' }]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  assert.equal(app.generation.status, 'failed');
+  assert.equal(authoring.calls.length, 1); // never retried
+  assert.match(app.generation.logs.at(-1).text, /Missing Anthropic API Key/);
+});
+
 test('GEN-107 kind "auto" requires a rationale — rejected without one, accepted and audited with one', async t => {
   const store = storeFixture(t, fakeAuthoring([
     { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>no rationale</h1>' } } }, // missing rationale -> rejected
