@@ -29,7 +29,7 @@ async function fixture(t,authoring){
   const base='http://127.0.0.1:'+runtime.server.address().port;
   t.after(()=>{runtime.server.close();rmSync(directory,{recursive:true,force:true});});
   const call=async(path,body)=>{const res=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+ownerToken,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});return {status:res.status,data:await res.json()};};
-  return {runtime,call};
+  return {runtime,call,base,ownerToken};
 }
 
 test('GENSRV-001 GET /api/me reports authoring not_configured (never blocks on a live probe) when no adapter is set',async t=>{
@@ -59,6 +59,25 @@ test('GENSRV-003 POST /api/apps/:id/generate runs a real generation through the 
   const state=await call('/api/apps/'+created.data.id);
   assert.equal(state.data.generation.status,'ready');
   assert.equal(state.data.config.tier,'static');
+});
+
+test('GENSRV-006 the full describe -> generate -> build -> preview chain (what ui.js drives automatically) produces a real, working preview -- not a template with the title pasted in',async t=>{
+  // index.html is a fragment, not a full document -- compileStatic() auto-wraps .js/.css into
+  // one <script>/<style> block each (see pracman/adapters/authoring/lib/prompt.js's
+  // STATIC_ASSEMBLY_NOTE, which tells a real model the same thing).
+  const authoring=fakeAuthoring([{status:'ok',output:{kind:'interactive',model:'claude-sonnet-5',source:{'index.html':'<h1>Tapper</h1>','app.js':'window.PAC_GAME_MARKER=true;'}}}]);
+  const {runtime,call,base,ownerToken}=await fixture(t,authoring);
+  const created=await call('/api/apps',{title:'Tapper Clone',brief:'A clone of the arcade game Tapper, insurance themed.',kind:'interactive',accent:'teal',tier:'intent'});
+  await call('/api/apps/'+created.data.id+'/generate',{});
+  await runtime.store.lastGeneration;
+  await call('/api/apps/'+created.data.id+'/build',{});
+  await runtime.store.lastBuild;
+  const state=await call('/api/apps/'+created.data.id);
+  assert.equal(state.data.build.status,'ready');
+  const preview=await fetch(base+'/api/apps/'+created.data.id+'/preview',{headers:{Authorization:'Bearer '+ownerToken}});
+  const html=await preview.text();
+  assert.match(html,/Tapper/); // the generated content itself, not a claims-workbench layout
+  assert.match(preview.headers.get('content-security-policy'),/allow-scripts/); // real client-side script actually runs
 });
 
 test('GENSRV-004 generate_application MCP tool round-trips through the real MCP surface',async t=>{
