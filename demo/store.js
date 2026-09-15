@@ -7,6 +7,13 @@ import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
 
 const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
 const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATTEMPTS||3));
+// Where an "application"-kind generation scaffolds real files. Defaults under this.dataDir
+// (fine standalone), but a deployment that runs pacmanager and its runtime adapter as
+// separate containers/processes needs this to be a path BOTH can see -- e.g. pracman's
+// run-pacmanager.sh points it at the same host-bind-mounted apps directory deploykit's
+// runtime adapter already materializes static/app-tier sources into (DEPLOYKIT_WORKDIR),
+// rather than pacmanager's own container-private data volume.
+const GENERATED_APPS_DIR=process.env.PAC_GENERATED_APPS_DIR||null;
 
 export class DemoError extends Error {constructor(status,message){super(message);this.status=status;}}
 const fail=(status,message)=>{throw new DemoError(status,message);};
@@ -173,7 +180,7 @@ export class Store {
     this.generating++;
     app.generation={id:job,status:'generating',requestedAtRevision:app.revision,attempts:[],logs:[{at:now(),text:`Requested generation · ${kind} · ${authoring.mode}`}]};
     this.save();
-    const workdir=(kind==='application'||kind==='auto')?join(this.dataDir,'generated',app.id):null;
+    const workdir=(kind==='application'||kind==='auto')?join(GENERATED_APPS_DIR||this.dataDir,'generated',app.id):null;
     if(workdir)mkdirSync(workdir,{recursive:true,mode:0o700});
     this.lastGeneration=(async()=>{
       let previousAttempt=null,lastIssues=[];
