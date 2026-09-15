@@ -5,23 +5,29 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Store,DemoError } from './store.js';
 import { createBuilder } from './builders.js';
-import { render,injectBriefings,escape } from './definition.js';
+import { render,injectBriefings,escape,KINDS } from './definition.js';
 import { graduationBundle } from './archive.js';
 import { assuranceSchema,assuranceRecord,completeness,saveAssurance,reportHtml,reportMarkdown,authoringGuide } from './assurance.js';
 import { createGithubPublisher } from './github-publisher.js';
 import { createRuntimeAdapter } from './runtime-adapter.js';
 import { createGraduationAdapters } from './graduation-adapter.js';
+import { createAuthoringAdapter } from './authoring-adapter.js';
 import { loadBrand } from './brand.js';
 import { principalFromProxyHeaders } from './proxy-auth.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
-const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},accent:{enum:Object.keys(brand.accentPalette())},tier:{enum:['template','static']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'}};
+// `kind` and `template` are dual-accept (see definition.js): a caller supplies exactly one.
+// `kind` picks a real artifact type -- interactive/knowledge/application, or "auto" to let the
+// model decide -- and pairs with tier "intent" (no source yet; generate_application produces
+// it). `template` is the legacy claims/knowledge layout, unrelated to generation.
+const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},kind:{enum:KINDS},accent:{enum:Object.keys(brand.accentPalette())},tier:{enum:['template','static','app','intent']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'},sourcePath:{type:'string',description:'Only for tier "app": path to a real, existing directory on disk containing a Dockerfile. Not embedded source — pacmanager attests its digest, it does not copy it.'}};
 const toolsList=[
   ['list_applications','List your applications',{},[]],
-  ['create_application','Create an application. Omit tier (or pass "template") for the bounded claims/knowledge layout. Pass tier "static" with a source file map to author real generated code, such as a playable game — index.html is required; inline the app\'s CSS/JS or split across additional .css/.js/.json/.svg files.',definitionProps,['title','brief','template','accent']],
-  ['inspect_application','Read draft, build logs, documents and comments',{id:{type:'string'}},['id']],
-  ['update_application','Update the definition; revision prevents overwriting another edit. Include tier and source to change or keep generated code — omitting them resets the app to the bounded template tier.',{id:{type:'string'},revision:{type:'integer'},...definitionProps},['id','revision','title','brief','template','accent']],
+  ['create_application','Create an application. Either omit tier (or pass "template") for the bounded claims/knowledge layout, or pass an artifact kind — interactive, knowledge, application, or auto to let the model choose — with tier "intent" and no source; call generate_application afterwards to actually author it. Pass tier "static" with a source file map yourself only if you are hand-authoring code rather than generating it.',definitionProps,['title','brief','accent']],
+  ['inspect_application','Read draft, build logs, generation status, documents and comments',{id:{type:'string'}},['id']],
+  ['update_application','Update the definition; revision prevents overwriting another edit. Include tier and source to change or keep generated code — omitting them resets the app to the bounded template tier.',{id:{type:'string'},revision:{type:'integer'},...definitionProps},['id','revision','title','brief','accent']],
+  ['generate_application','Generate real source for a "kind"-based application (tier "intent" or a previous generation) using the configured authoring adapter — an actual model call, not a template. Fails clearly (501) if no adapter is configured; validates and repairs its own output against the same safety gate a hand-authored source map must pass, up to a few attempts, before failing. Poll inspect_application for progress and the result.',{id:{type:'string'}},['id']],
   ['build_application','Start a real build, then inspect its status',{id:{type:'string'}},['id']],
   ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}},['id']],
   ['publish_application','Publish the current successfully built draft internally',{id:{type:'string'}},['id']],
@@ -40,9 +46,9 @@ const toolsList=[
   ['unshare_application','Revoke a colleague\'s email-based access to this application. Owner-only.',{id:{type:'string'},email:{type:'string'}},['id','email']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
-export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters()}){
+export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter()}){
   if(!ownerToken||ownerToken.length<32)throw new Error('Owner token must be at least 32 characters');
-  const store=new Store(directory,builder,runtime,graduationAdapters);
+  const store=new Store(directory,builder,runtime,graduationAdapters,authoring);
   // Loopback aliases: 127.0.0.1 and localhost name the same machine at the same port/scheme, and this
   // server only ever binds to loopback (HOST defaults to 127.0.0.1). Accepting both prevents a confusing
   // silent 403 when a browser is pointed at "localhost" instead of the exact configured origin.
@@ -135,6 +141,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'create_application':output=store.create(principal,a);break;
               case 'inspect_application':output=store.view(principal,a.id);break;
               case 'update_application':{const {id,revision,...config}=a;output=store.update(principal,id,config,revision);break;}
+              case 'generate_application':output=await store.startGeneration(principal,a.id);break;
               case 'build_application':output=store.startBuild(principal,a.id);break;
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
               case 'publish_application':store.publish(principal,a.id);output={url:origin+'/?app='+a.id+'&published=1'};break;
@@ -158,7 +165,13 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         }catch(error){if(body.method!=='tools/call')return json(200,{jsonrpc:'2.0',id:body.id,error:{code:-32602,message:error.message}});result={isError:true,content:[{type:'text',text:error.message}]};}
         return json(200,{jsonrpc:'2.0',id:body.id,result});
       }
-      if(path==='/api/me'&&req.method==='GET')return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:principal.via==='proxy'?'proxy':'local'});
+      if(path==='/api/me'&&req.method==='GET'){
+        // Cached probe (see store.js's authoringStatus) -- never blocks this on a live model
+        // call, so a page load can never hang on the gateway. Surfaced here so the browser can
+        // show "no AI configured" before the user writes a brief, per the original complaint.
+        const authoring=await store.authoringStatus();
+        return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:principal.via==='proxy'?'proxy':'local',authoring});
+      }
       const report=path.match(/^\/api\/apps\/([a-f0-9-]+)\/reports\/(arb|readiness|bom)$/);
       if(report&&req.method==='GET'){
         const record=assuranceRecord(store.access(principal,report[1])),kind=report[2],format=url.searchParams.get('format')||'html';
@@ -189,7 +202,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -212,6 +225,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       switch(action){
         case 'definition':store.update(principal,id,body.config,body.revision);break;
         case 'build':return json(202,store.startBuild(principal,id));
+        case 'generate':return json(202,await store.startGeneration(principal,id));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;
         case 'binding':store.bind(principal,id);break;
