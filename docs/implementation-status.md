@@ -164,6 +164,133 @@ pacmanager `app`-tier release end to end: `create_application` (real `sourcePath
 served through the full chain at `http://localhost/<path-prefix>/`**. `deployment_status`
 correctly reported `running` with the real container id and URL throughout.
 
+## Real AI-driven generation (this pass)
+
+Not to be confused with the "Real application generation" section directly below, from an
+earlier pass: that one lets a caller (a human, or Claude via MCP) *hand-author* real source
+and have it genuinely compiled/served — no model involved. This pass adds what was still
+missing after that: an actual model call that turns a plain-English brief into that source,
+because the honest state before this pass was that pacmanager's own browser form asked for a
+brief, then silently ignored it and served the bounded four-field template. Verified live: a
+"Tapper Clone" brief produced 1,371 bytes with zero `<script>` — a claims-workbench layout
+with the title pasted in.
+
+Four real, live-reported problems drove this pass, not a speculative wishlist:
+1. The browser form made the user pick a **template** (`claims`/`knowledge`), which changes
+   exactly one word of output (`demo/definition.js`'s eyebrow label) and is required on every
+   tier including ones where it means nothing.
+2. **Nothing was generated.** No model integration existed anywhere in the repo — no provider
+   env var was ever read.
+3. Branding: the sidebar was pale sage and the logo was rendered in white on light backgrounds
+   (~1.1:1 contrast, effectively invisible) — see "Branding and sign-out" below.
+4. Sign-out 404'd: `authMode` was reported from the server's configured mode, not from how the
+   requesting principal actually authenticated.
+
+**Artifact kinds replace the template choice.** `demo/definition.js` adds
+`kind: 'interactive' | 'knowledge' | 'application' | 'auto'` (plus `'classic'` for the legacy
+template layout, never offered in the browser picker but MCP-reachable forever) and a new
+tier, `'intent'` — a definition that has been created but not yet generated. `compile()`
+explicitly refuses a `tier: 'intent'` definition rather than silently falling back to a
+template; there is no template to fall back to. This is what makes "silently produced the
+wrong thing" structurally impossible rather than merely discouraged. Migration is dual-accept,
+absent-means-classic: `kind` is optional, and when absent, `template` behaves exactly as
+before with a byte-identical `sourceDigest` (verified via `git stash` before/after comparison
+against the pre-change commit, pinned as regression hashes in `test/kind.test.js`) — no
+existing record needed rewriting.
+
+**Generation is a separate, earlier lifecycle stage from build, not a branch inside it.**
+`startBuild()`'s entire contract is "run the builder, then require byte-identical
+re-derivation" (the reason the build sandbox is meaningful at all) — a nondeterministic model
+call has no place inside that. `Store.startGeneration()` (`demo/store.js`) calls the
+authoring adapter, validates its output against the exact same safety gate a hand-authored
+source map must pass (`sourceIssues()` — the prompt and the gate read the same constants,
+`SOURCE_LIMITS`/`FORBIDDEN_LABELS`, so they cannot drift apart), and on success writes the
+result through `definition()` — never by hand-merging fields — bumping `app.revision` exactly
+once. From that point on the existing build/publish/deploy/graduate paths run unchanged,
+because by the time `startBuild()` runs, `config.source` is frozen literal data. Generation
+gets its own state field, `app.generation`, deliberately not reusing `app.build` — build and
+generation have incompatible contracts, and `app.build.status==='ready'` with no result would
+corrupt both `draw()` and the publish guard.
+
+The retry loop (bounded at `PAC_AUTHORING_MAX_ATTEMPTS`, default 3, hard ceiling 5) lives in
+the host, not the adapter — one adapter invocation is one attempt, and the host feeds the
+exact rejection (safety-gate issues, or a malformed reply) back as the next attempt's
+`previousAttempt`. An adapter-reported failure is retried only when it marks itself
+`retriable` (the model's own mistake — malformed output) versus not (a broken credential or
+dead gateway, where retrying the same request three times just wastes the budget). An
+`application`-kind artifact's `sourcePath` is `realpathSync`-contained against the `workdir`
+the host handed the adapter; a containment violation is a hard failure with no retry, since
+that's an adapter bug or an attack, not a model mistake. `GET /api/me` exposes a cached
+authoring-availability probe (`authoringStatus()`, default 5-minute TTL, stale-but-return with
+a background refresh) so a page load never blocks on a live model call, and the browser can
+say "no AI connected" before a brief is even written.
+
+The out-of-process adapter (`pracman/adapters/authoring/` — Plymouth Rock-specific, kept out
+of this OSS repo) calls the sandbox LiteLLM proxy first, falling back to a direct Anthropic or
+OpenAI key if LiteLLM is unreachable or misconfigured. Two real, live-only bugs were found and
+fixed getting an actual model to complete this loop (neither was visible in any unit test,
+because both required a real gateway and a real prompt of realistic length):
+- `claude-sonnet-5` through this gateway defaults to extended thinking, and with a
+  realistic-length prompt the entire token budget could be consumed by an empty thinking
+  block before any answer text — HTTP 200, `finish_reason: "length"`, `message.content`
+  structurally empty, no error status anywhere. Fixed by explicitly disabling thinking on the
+  request (it buys nothing for a fully-specified code-generation prompt).
+- Asking the model to JSON-escape multi-line HTML/CSS/JS into a JSON string value failed
+  reliably (3 for 3 on a real generation, including retries, because the format itself was
+  the problem) — the model kept embedding literal unescaped newlines inside JSON string
+  values, which `JSON.parse` correctly rejects. Fixed by replacing the output format entirely
+  with a delimited plain-text scheme (`@@PAC_FILE: path@@` ... `@@PAC_END@@`) where file
+  content is copied verbatim, with no escaping step to get wrong.
+
+**Verified live end-to-end, through the actual browser-facing API, not just against a fake
+adapter in tests:** the exact brief from the original complaint — "a clone of the arcade game
+Tapper, insurance themed... slide insurance claims down the counter" — produced a real 11.7KB
+canvas game (`serveClaim`, `spawnCustomer`, `gainScore`, `loseLife`, a `requestAnimationFrame`
+loop, real keyboard handling) through `claude-sonnet-5` via the real sandbox LiteLLM proxy,
+which then built, byte-verified, and rendered correctly. `demo/web/ui.js` chains this
+automatically: saving a kind-based brief calls `generate`, and once generation lands, `build`
+fires on its own — describing an app now produces a working preview in one motion, with the
+existing 2-second poll loop surfacing generation progress in the same log panel build activity
+already used.
+
+Test counts: `test/kind.test.js` (10), `test/authoring-adapter.test.js` (5, against a real
+spawned process), `test/generation-store.test.js` (12, against an in-process fake adapter that
+scripts exact response sequences), `test/generation-server.test.js` (6, against a real
+listening HTTP server, including the full describe→generate→build→preview chain). Separately,
+`pracman/adapters` (Plymouth Rock-specific, not in this repo): 70 tests for the actual
+model-calling adapter (provider fallback, prompt, the delimited-format parser, scaffolding,
+and the full CLI process end-to-end against a fake LiteLLM server).
+
+Not done in this pass: the "knowledge" artifact kind's agent-backed Q&A (needs Letta + pgvector
+— see "The agent service" in Remaining tasks above, still not stood up) and the remainder of
+the branding re-theme (`demo/web/style.css` still has ~45 bare hex literals beyond the four
+tokenized for the logo/sign-out fix; fonts are still not self-hosted; see "Branding and
+sign-out" below for what *was* fixed this pass).
+
+## Branding and sign-out (this pass)
+
+Two of the four live-reported problems that drove this pass (see above) were unrelated to
+generation and fixed first, independently, since both were small and high-annoyance:
+
+- **Sign-out 404'd.** `GET /api/me`'s `authMode` was derived from the server's *configured*
+  auth mode (`process.env.PAC_AUTH_MODE==='proxy'`), not from how the requesting principal
+  actually authenticated — so an owner-token session behind a proxy-fronted deployment got
+  sent to `/oauth2/sign_out`, which 404s because oauth2-proxy isn't in that request's path at
+  all. Fixed by tagging the principal itself (`principalFromProxyHeaders()` now returns
+  `via: 'proxy'`) and deriving `authMode` per-request from that tag, not from the server-wide
+  setting. `test/proxy-auth.test.js` (PROXY-AUTH-010/011) proves this with real HTTP
+  round-trips, not just a unit check of the derivation function.
+- **The logo was invisible.** The server hardcoded the light-background surfaces (login page,
+  sidebar) to `/brand/logo` — a white asset at ~1.1:1 contrast against both. Pointed both
+  markers at `/brand/logoMono` instead (the pack's blue variant, which nothing had been
+  consuming). Deliberately not "fixed" with a CSS recolor filter — the brand pack's
+  `lint.forbidLogoRecolor` rule exists specifically to prevent that.
+
+Not done in this pass: the remaining ~45 bare hex literals in `demo/web/style.css` (the pale
+sage sidebar being the most visible), self-hosted fonts (`--pac-font-sans`/
+`--pac-font-display` currently have no real consumer path), a favicon link, and deciding the
+dead `{{PAC_PRODUCT_TAGLINE}}` substitution's fate.
+
 ## Real application generation (this pass)
 
 Added a `tier` field to the application definition (`demo/definition.js`). `tier: 'template'` (the default) is
