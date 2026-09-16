@@ -16,7 +16,10 @@
     "line": "#dce2da",
     "ok": "#376746",
     "warn": "#a86a1f",
-    "error": "#a83232"
+    "error": "#a83232",
+    "sunken": "#e9eee7",
+    "hover": "#e6eee7",
+    "badge": "#eaf1e7"
   },
   "fonts": {
     "display": "Inter",
