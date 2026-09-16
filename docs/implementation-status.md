@@ -8,17 +8,24 @@ repo (a live sandbox, DevOps sign-off, a model endpoint) or just not built yet.
 
 ### Blocking the three stated goals (local app → sandbox app → migrate chatprc)
 
-- **R5 — Per-app access control does not exist at any layer.** Verified: deploykit's
-  oauth2-proxy gate is server-wide with `OAUTH2_PROXY_EMAIL_DOMAINS="*"` (whole tenant, not
-  an allowlist); generated per-app nginx blocks (`proxy/nginx.py` `add_route()`) carry zero
-  auth directives and there is no parameter to pass one; the control plane's shared
-  `DEPLOYKIT_TOKEN` + self-asserted `X-Deploy-User` means any token holder can
-  stop/start/undeploy/read logs for *any* app; `/api/v1/status-public` and the built-in
-  landing page are unauthenticated and list every app with its owner and URL. Needed for
-  "visible only to me and the people I share it with": `auth_request_set
-  $dk_email $upstream_http_x_auth_request_email;` per app location, checked against an
-  allowlist pacmanager already has the data model for (its collaborator/invite system) —
-  not yet threaded through deploykit's `AppSpec` → `add_route()` → nginx templates.
+- **R5 — CORRECTED, was stale.** This previously read "Per-app access control does not exist
+  at any layer." Re-verified live while doing the platform gap analysis
+  (`pracman/docs/gap-analysis.md` §2.5): it now exists. deploykit's
+  `sandbox/src/deploykit/proxy/nginx.py` `_acl_block()` generates a real per-app nginx ACL
+  from `AppSpec.allowed_emails`, matched against `$http_x_forwarded_email`, and it
+  round-trips correctly through a deploykit restart (`service.py:112-123`); `PUT
+  /api/v1/access/{app_id}` exists server-side; pacmanager's own runtime adapter already
+  calls it via `setAccess`. Remaining work here is verification, not construction — plus one
+  real open question the correction surfaced: the ACL trusts an *incoming* header rather than
+  nginx's `auth_request` module (`nginx.py`'s own docstring says `auth_request` was tried
+  first and doesn't work in this nginx/Docker combination), so the guarantee is sound only
+  while oauth2-proxy is unavoidably in front of the app and the app's own port is
+  unreachable directly — a network-topology invariant, not a cryptographic one, and it needs
+  to be confirmed rather than assumed before "share with specific people" is trusted as a
+  security boundary rather than a UX convenience. The shared-`DEPLOYKIT_TOKEN` +
+  self-asserted `X-Deploy-User` control-plane concern in the original note is unrelated to
+  this and remains accurate: any token holder can still stop/start/undeploy/read logs for
+  *any* app at the control-plane layer, independent of the per-app nginx ACL.
 - **The export-before-undeploy safety gate has no working path for the app tier.**
   Verified live: `graduationFiles()`/the standalone export route now correctly *refuses* an
   app-tier release ("use graduate_application instead" — see R2 below), which means
