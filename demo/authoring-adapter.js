@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { envelope, validateResult, AUTHORING_CAPABILITY, AUTHORING_OPERATIONS } from '../src/adapters.js';
 import { runAdapter, parseCommandLine } from './adapter-host.js';
 
-/** Build an authoring adapter (the model-calling "generate" plugin — genuinely new, not an
- * implementation of docs/plugins.md's "authoring adapter" line, which describes a transport
- * mapping, not a generator; see docs/implementation-status.md) from PAC_AUTHORING_ADAPTER, a
+/** Build an authoring adapter (the model-calling "generate" plugin — genuinely new, not the
+ * "client transport adapter" type in docs/plugins.md, formerly also named "authoring adapter"
+ * there before this capability's rename; that one describes a transport mapping, not a
+ * generator; see docs/implementation-status.md) from PAC_AUTHORING_ADAPTER, a
  * "command arg1 arg2" config string. Returns null when unconfigured; callers (store.js's
  * requireAuthoring()) must fail closed with a specific, actionable message, never fall back
  * to a template.

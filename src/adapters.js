@@ -15,9 +15,10 @@ export const RUNTIME_CAPABILITIES = ['deploy', 'sync', 'undeploy', 'stop', 'star
 
 export const GRADUATION_CAPABILITY = 'graduate';
 
-/** Authoring capability — new, and genuinely new: docs/plugins.md's "authoring adapter" line
- * describes a *transport* adapter (MCP/CLI/API mapping onto the control plane), not a
- * generator. This is the first plugin type that turns a brief into real source, via an
+/** Authoring capability — genuinely new, not the "client transport adapter" type in
+ * docs/plugins.md (formerly also called "authoring adapter" there, before the rename this
+ * capability prompted — that one describes an MCP/CLI/API mapping onto the control plane, not
+ * a generator). This is the first plugin type that turns a brief into real source, via an
  * out-of-process model call — see demo/authoring-adapter.js and
  * docs/implementation-status.md's generation design. */
 export const AUTHORING_CAPABILITY = 'authoring';
