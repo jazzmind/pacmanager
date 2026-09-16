@@ -1,4 +1,4 @@
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:var(--pac-ink,#203b32);background:var(--pac-canvas,#f6f5f0);font-synthesis:none}
+:root{font-family:var(--pac-font-sans,ui-sans-serif,system-ui,-apple-system,sans-serif);color:var(--pac-ink,#203b32);background:var(--pac-canvas,#f6f5f0);font-synthesis:none}
 *{box-sizing:border-box}
 body{margin:0}
 button,input,textarea,select{font:inherit}
@@ -15,7 +15,7 @@ small,.hint{font-size:11px;color:var(--pac-ink-muted);line-height:1.6}
 .brand{font-size:22px;letter-spacing:-1px;font-weight:700;margin-bottom:44px}
 .brand-logo{height:28px;display:block}
 .brand-text{font-family:var(--pac-font-display,inherit)}
-.eyebrow{font-size:10px;letter-spacing:1.8px;font-weight:650;margin:0 0 15px}
+.eyebrow{font-size:10px;letter-spacing:1.8px;font-weight:650;margin:0 0 15px;text-transform:uppercase}
 .sidebar{position:fixed;width:240px;background:var(--pac-sunken,#e9eee7);border-right:1px solid var(--pac-line);height:100vh;padding:32px 22px}
 .sidebar .primary{width:100%;margin-bottom:24px}
 nav button{display:block;text-align:left;width:100%;margin-bottom:7px;background:transparent;border:0;padding:13px 10px;line-height:1.5}
