@@ -12,6 +12,29 @@ const owner={kind:'owner',label:'Demo owner'},config={title:'Claims review',brie
 function fixture(t,github){const directory=mkdtempSync(join(tmpdir(),'pac-assurance-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));return createDemo({directory,ownerToken:'x'.repeat(64),builder:{mode:'Test compiler · no container isolation',build:async c=>compile(c)},github});}
 async function published(runtime){const app=runtime.store.create(owner,config);runtime.store.startBuild(owner,app.id);await runtime.store.lastBuild;runtime.store.publish(owner,app.id);return app;}
 
+test('ASSURANCE-004 a kind-based generated artifact\'s ARB/BOM claims are accurate -- not the stale "no generated scripts" / "${undefined} template" claims that predate real generation',async t=>{
+  const runtime=fixture(t);
+  const kindConfig={title:'Tapper Clone',brief:'An arcade game, insurance themed.',kind:'interactive',accent:'teal',tier:'static',source:{'index.html':'<h1>hi</h1>','app.js':'window.x=1;'}};
+  const app=runtime.store.create(owner,kindConfig);
+  runtime.store.startBuild(owner,app.id);await runtime.store.lastBuild;
+  runtime.store.publish(owner,app.id);
+  const record=assuranceRecord(app);
+  assert.ok(!record.data.arb.scope.text.includes('undefined template'), 'template is never set on a kind-based record -- must not leak as literal "undefined"');
+  assert.ok(!record.data.arb.frontend.text.includes('no generated scripts'), 'a real generated <script> block exists for this artifact -- claiming otherwise is false');
+  assert.match(record.data.arb.frontend.text, /interactive/);
+  assert.match(record.data.arb.scope.text, /live server-side integrations remain outside this demo/i); // still calls out what IS out of scope correctly
+  assert.match(record.facts.artifactRuntime, /generated client-side scripts/);
+  assert.match(record.data.bom.permissions.text, /sandboxed, network-blocked iframe/);
+});
+
+test('ASSURANCE-005 a classic (kind-less) artifact keeps the original, still-accurate claims unchanged',async t=>{
+  const app=await published(fixture(t));
+  const record=assuranceRecord(app);
+  assert.match(record.data.arb.frontend.text, /no generated executable scripts/);
+  assert.match(record.data.arb.scope.text, /claims template/);
+  assert.match(record.facts.artifactRuntime, /no generated executable scripts/);
+});
+
 test('ASSURANCE-001 published changes regenerate all report data and preserve human decisions as stale',async t=>{
   const runtime=fixture(t),app=await published(runtime);let record=assuranceRecord(app);
   assert.equal(record.release,1);assert.match(record.data.arb.purpose.text,/Claims review/);assert.equal(record.data.readiness.recovery.status,'unknown');assert.ok(completeness(record).missingOrProposed>0);
