@@ -1,7 +1,7 @@
 import { initGraduation } from './graduation-ui.js';
 import { CAPABILITIES,CAPABILITY_GROUPS,USE_CASES,SENSITIVE_DATA_NOTICE,deriveKind,expandCapabilities } from './capabilities.js';
 const $=id=>document.getElementById(id);
-let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',previewKey='',historyOpen=false,selectedRelease=null,currentCards=[];
+let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',previewKey='',historyOpen=false,selectedRelease=null,currentCards=[],chatMode='chat',currentPlan=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
@@ -107,7 +107,11 @@ const RUN={
   generate:async()=>{await api('apps/'+app.id+'/generate',{});return 'Generating…';},
   build:async()=>{await api('apps/'+app.id+'/build',{});return 'Build started.';},
   publish:async()=>{await api('apps/'+app.id+'/publish',{});published=true;return 'Published.';},
-  bind:async()=>{await api('apps/'+app.id+'/binding',{});return 'Mock claims service bound.';},
+  // Execute is the ONLY thing that actually changes the app -- drafting or amending a plan
+  // (the Plan tab's chat calls) never does. Reuses the exact same revise path a direct chat
+  // change-request already uses; a plan is just a changeRequest that got reviewed first.
+  executePlan:async()=>{const text=currentPlan.text;currentPlan=null;await api('apps/'+app.id+'/generate',{changeRequest:text});return 'Executing the plan…';},
+  discardPlan:async()=>{currentPlan=null;return 'Plan discarded.';},
   regenerate:async()=>{
     if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return null;
     await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
@@ -124,7 +128,7 @@ const RUN={
 // it's always in sync with what's actually possible (unlike the old always-on button bar, which
 // showed every action regardless of whether it made sense right now).
 function proposals(){
-  const isOwner=me.kind==='owner',hasKind=Boolean(app.config.kind),hasSource=['static','app'].includes(app.config.tier);
+  const hasKind=Boolean(app.config.kind),hasSource=['static','app'].includes(app.config.tier);
   if(app.generation?.status==='generating')return [{tone:'info',busy:true,title:'Generating…',body:`Authoring via ${app.generation.model||'the configured model'}. This usually takes under a minute.`}];
   if(app.build?.status==='building')return [{tone:'info',busy:true,title:'Building…',body:'Compiling and running the safety checks required before preview or publish.'}];
   const cards=[];
@@ -141,11 +145,14 @@ function proposals(){
     // modal. A card only appears here while there's a genuine next action to take.
     cards.push({tone:'primary',title:'Ready to publish',body:`Build passed ${passed}/${checks.length} checks${app.build.result?.sourceDigest?' ('+app.build.result.sourceDigest.slice(0,10)+')':''} and hasn't been released yet. Publishing makes it v${nextRelease} — the version your team sees.`,actions:[{label:'Publish as v'+nextRelease,run:'publish'}]});
   }
-  if(isOwner&&!app.binding)cards.push({tone:'action',title:'Bind mock claims',body:'Grants access to synthetic claims data for testing. No live service.',actions:[{label:'Bind mock claims',run:'bind'}]});
   return cards;
 }
 function renderCards(){
   currentCards=proposals();
+  // A drafted-but-not-yet-executed plan sits above the usual proposals, since it's the one
+  // thing actively waiting on a decision -- keep amending it via more Plan-tab messages, or
+  // execute/discard it. Executing calls the exact same revise path as a direct change request.
+  if(currentPlan)currentCards=[{tone:'primary',title:'Proposed plan',body:currentPlan.text,actions:[{label:'Execute this plan',run:'executePlan'},{label:'Discard',run:'discardPlan'}]},...currentCards];
   $('chat-cards').innerHTML=currentCards.map((c,ci)=>`<div class="chat-card tone-${c.tone}${c.busy?' busy':''}"><strong>${esc(c.title)}</strong><p>${esc(c.body)}</p>${(c.actions||[]).map((a,ai)=>a.href?`<a class="button" href="${a.href}">${esc(a.label)}</a>`:`<button data-card="${ci}" data-action="${ai}">${esc(a.label)}</button>`).join('')}</div>`).join('');
 }
 // The thread merges audit[] (system events -- created, published, rolled back, document
@@ -160,6 +167,9 @@ function renderThread(){
     // thread rather than dropped, which is also where proposals()'s "see the log below" points.
     ...(app.generation?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:app.generation.model||null})),
     ...(app.build?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:null})),
+    // Chat/Plan exchanges -- each becomes two consecutive entries (question then answer) at
+    // the same timestamp; Array.sort is stable, so pairing order survives the sort below.
+    ...(app.chatLog||[]).flatMap(c=>[{at:c.at,kind:'chatlog-q',text:c.message,actor:c.author},{at:c.at,kind:'chatlog-a',text:c.reply,actor:c.mode==='plan'?'Proposed plan':'Answer'}]),
   ].sort((a,b)=>new Date(a.at)-new Date(b.at));
   const thread=$('chat-thread');
   const wasAtBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<40;
@@ -196,7 +206,7 @@ function draw(){
   $('canvas-view').hidden=historyOpen;$('history-view').hidden=!historyOpen;
   $('draft').classList.toggle('selected',!published&&!historyOpen);$('published').classList.toggle('selected',published&&!historyOpen);$('history').classList.toggle('selected',historyOpen);
   if(historyOpen)renderHistory();
-  renderCards();renderThread();
+  setChatMode(chatMode);renderCards();renderThread();
 }
 // "View earlier versions" as a real affordance, not just a number/date list with a blind
 // rollback button: the right pane actually previews the selected release's own frozen content
@@ -219,8 +229,11 @@ $('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href
 $('new').onclick=$('start').onclick=()=>editor();
 $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-$('crumb-home').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
-const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
+$('crumb-home').onclick=action(async()=>{selected=null;currentPlan=null;history.replaceState(null,'','/');await refresh();});
+// currentPlan is a draft for the app currently open, not per-app state on the server -- must
+// be dropped on every switch, or a plan drafted for one app would wrongly still show as
+// "proposed" for whichever app is opened next.
+const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;currentPlan=null;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
 $('home').onclick=openApp;$('switcher-list').onclick=openApp;
 $('crumb-toggle').onclick=e=>{e.stopPropagation();renderSwitcher();$('switcher-popover').hidden=!$('switcher-popover').hidden;};
 $('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;editor();};
@@ -295,13 +308,25 @@ $('history-rollback').onclick=action(async()=>{
   toast('Rolled back to v'+selectedRelease+' (as a new release).');
 });
 $('upload').onchange=action(async()=>{const file=$('upload').files[0];if(!file)return;if(file.size>256000)throw new Error('Choose a file under 256 KB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);await api('apps/'+app.id+'/documents',{name:file.name,base64:btoa(binary)});$('upload').value='';await refresh();toast('Document added.');});
+const CHAT_MODE_PLACEHOLDER={chat:'Ask a question about this app…',plan:'Describe the change you want — a plan will be drafted for you to review first…',notes:'Leave a note…'};
+function setChatMode(mode){
+  chatMode=mode;
+  document.querySelectorAll('#chat-modes [data-mode]').forEach(b=>b.classList.toggle('selected',b.dataset.mode===mode));
+  $('chat-input').placeholder=CHAT_MODE_PLACEHOLDER[mode];
+}
+$('chat-modes').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;setChatMode(b.dataset.mode);};
 $('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('chat-form').requestSubmit();}});
 $('chat-form').onsubmit=action(async()=>{
   const text=$('chat-input').value.trim();if(!text)return;
-  const hasSource=['static','app'].includes(app.config.tier);
   $('chat-input').value='';
-  if(hasSource){await api('apps/'+app.id+'/generate',{changeRequest:text});toast('Requesting change…');}
-  else await api('apps/'+app.id+'/comments',{text});
+  // Notes = the old plain-comment behavior. Chat/Plan never touch the app themselves --
+  // Chat answers questions, Plan drafts a proposal that only "Execute this plan" (a chat
+  // card action) actually turns into a real change request. Nothing here silently generates.
+  if(chatMode==='notes'){await api('apps/'+app.id+'/comments',{text});}
+  else{
+    const result=await api('apps/'+app.id+'/chat',{mode:chatMode,message:text});
+    if(chatMode==='plan'){currentPlan={text:result.reply};toast('Plan drafted — review it above.');}
+  }
   await refresh();
 });
 $('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id+'/invite',{label:$('colleague').value});$('invite-url').value=result.url;$('invite-url').hidden=false;$('colleague').value='';$('invite-url').select();await refreshInviteList();});

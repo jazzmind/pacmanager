@@ -17,6 +17,7 @@ import { createAgentAdapter } from './agent-adapter.js';
 import { loadBrand } from './brand.js';
 import { principalFromProxyHeaders } from './proxy-auth.js';
 import { adminOverview,adminServices,adminLlmTest,adminOrchestrationTest,adminAgentTest } from './admin.js';
+import { appChat } from './chat.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
@@ -242,7 +243,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -280,6 +281,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'rollback':return json(200,store.rollback(principal,id,body.release));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;
+        case 'chat':{const result=await appChat(app,{mode:body.mode,message:body.message});return json(200,store.recordChat(principal,id,{mode:body.mode,message:body.message,reply:result.reply}));}
         case 'binding':store.bind(principal,id);break;
         case 'publish':store.publish(principal,id);break;
         case 'invite':return json(201,{url:origin+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});

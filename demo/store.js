@@ -39,6 +39,7 @@ export class Store {
     for(const app of this.state.apps)if(app.generation===undefined)app.generation=null;
     for(const app of this.state.apps)if(app.archivedAt===undefined){app.archivedAt=null;app.archivedBy=null;}
     for(const app of this.state.apps)if(!app.releases)app.releases=[];
+    for(const app of this.state.apps)if(!app.chatLog)app.chatLog=[];
     this.save();this.running=0;this.generating=0;this._authoringCache=null;
   }
   save(){writeFileSync(this.file+'.tmp',JSON.stringify(this.state),{mode:0o600});renameSync(this.file+'.tmp',this.file);}
@@ -90,7 +91,7 @@ export class Store {
     // apps get ownerEmail:null -- admin-visible only, same as before this pass existed.
     if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
-    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null};
+    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null,chatLog:[]};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
   }
   // Email-based sharing (distinct from the pre-existing label-based single-use invite
@@ -292,6 +293,12 @@ export class Store {
     app.documents.push(doc);this.audit(app,'document uploaded: '+doc.name,p);this.save();return {id:doc.id,name:doc.name};
   }
   comment(p,appId,text){const app=this.access(p,appId);if(typeof text!=='string'||!text.trim()||text.length>3000)fail(400,'Note must be 1–3000 characters');if(app.comments.length>=500)fail(429,'Comment limit reached');app.comments.push({id:id(),text:text.trim(),author:p.label,createdAt:now()});this.save();}
+  // Persists a chat/plan exchange (the LLM call itself happens in server.js via demo/chat.js
+  // -- that's real network I/O against an external service, kept out of this module the same
+  // way every other adapter call is). Read access only, same as comment() above: asking a
+  // question or drafting a plan doesn't itself change anything, so a collaborator can too --
+  // only the "Execute this plan" step later requires the owner-gated generate() call.
+  recordChat(p,appId,{mode,message,reply}){const app=this.access(p,appId);app.chatLog=[...(app.chatLog||[]),{id:id(),mode,message,reply,author:p.label,at:now()}].slice(-100);this.save();return app.chatLog.at(-1);}
   recordBriefing(p,appId,input){
     const app=this.access(p,appId,true);
     if(typeof input.agentId!=='string'||!input.agentId.trim())fail(400,'agentId is required');

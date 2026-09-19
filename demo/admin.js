@@ -1,5 +1,6 @@
 import { connect } from 'node:net';
 import { assuranceRecord, completeness } from './assurance.js';
+import { completeChat } from './litellm.js';
 
 const OWNER_PRINCIPAL = { kind: 'owner', label: 'Admin console' };
 
@@ -85,24 +86,8 @@ export async function adminServices({ runtime, orchestration, env = process.env 
  * extended-thinking-style local model) returns empty content with finish_reason:"length" on
  * a too-small budget, a trap already hit and documented elsewhere in this workspace. */
 export async function adminLlmTest({ model, prompt, maxTokens }, env = process.env) {
-  if (!env.PAC_LITELLM_URL) throw Object.assign(new Error('No LLM configured. Set PAC_LITELLM_URL (and PAC_LITELLM_KEY if required).'), { status: 501 });
   if (typeof prompt !== 'string' || !prompt.trim()) throw Object.assign(new Error('prompt is required'), { status: 400 });
-  const started = Date.now();
-  const res = await fetch(new URL('/v1/chat/completions', env.PAC_LITELLM_URL), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(env.PAC_LITELLM_KEY ? { Authorization: `Bearer ${env.PAC_LITELLM_KEY}` } : {}) },
-    body: JSON.stringify({ model: model || env.PAC_LITELLM_DEFAULT_MODEL || 'local-qwen', messages: [{ role: 'user', content: prompt }], max_tokens: Number(maxTokens) || 1024 }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error?.message || `LLM call failed (HTTP ${res.status})`), { status: 502 });
-  return {
-    model: data.model || model,
-    content: data.choices?.[0]?.message?.content || '',
-    finishReason: data.choices?.[0]?.finish_reason || null,
-    usage: data.usage || null,
-    costUsd: Number(res.headers.get('x-litellm-response-cost')) || null,
-    tookMs: Date.now() - started,
-  };
+  return completeChat({ model, messages: [{ role: 'user', content: prompt }], maxTokens }, env);
 }
 
 export async function adminOrchestrationTest({ orchestration }) {
