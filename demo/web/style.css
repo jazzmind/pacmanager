@@ -123,3 +123,20 @@ header h1{font-size:24px}
 #graduation summary{cursor:pointer;font-size:13px}
 #graduation a{font-size:11px}
 
+#console{max-width:1100px;margin:0 auto;padding:34px 36px}
+#console header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.admin-panel{margin-bottom:20px}
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin:16px 0}
+.admin-tile{border:1px solid var(--pac-line);border-radius:8px;padding:14px}
+.admin-tile strong{display:block;font-size:13px;margin-bottom:6px}
+.admin-status{font-size:12px;font-weight:600}
+.admin-tile-up .admin-status{color:var(--pac-ok,#2a7a4f)}
+.admin-tile-down .admin-status{color:var(--pac-danger,#b3261e)}
+.admin-tile-absent .admin-status{color:var(--pac-ink-muted)}
+.admin-tile small{display:block;margin-top:8px;word-break:break-word}
+.admin-form{display:flex;flex-direction:column;gap:10px;max-width:520px}
+.admin-form textarea{min-height:80px}
+.admin-result{margin-top:14px;padding:14px;border:1px solid var(--pac-line);border-radius:8px;background:var(--pac-sunken,#e9eee7)}
+.admin-row{display:grid;grid-template-columns:1fr 120px 140px 1fr 80px auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--pac-line);font-size:12px}
+.admin-row:last-child{border-bottom:0}
+

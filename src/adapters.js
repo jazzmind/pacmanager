@@ -28,6 +28,22 @@ export const AUTHORING_OPERATIONS = ['generate', 'probe'];
  * excluded here even though demo/definition.js's KINDS includes it for validation purposes. */
 export const AUTHORING_KINDS = ['interactive', 'knowledge', 'application', 'auto'];
 
+/** Orchestration capability — the admin console's Temporal test panel. Deliberately narrow:
+ * a health check (prove the adapter can actually reach a namespace, not just that a port is
+ * open) and a read-only recent-workflow listing. No startWorkflow here — the admin console is
+ * for verifying the platform is wired up, not a general Temporal client; a real workflow
+ * trigger belongs to the feature that needs it (e.g. the Phase 4 chief-of-staff schedule),
+ * each with its own adapter call, not a generic "run anything" admin action. */
+export const ORCHESTRATION_CAPABILITY = 'orchestration';
+export const ORCHESTRATION_OPERATIONS = ['health', 'listWorkflows'];
+
+/** Agent capability — the admin console's agent test panel, and (Phase 4) the chief-of-staff
+ * loop. 'probe' proves the adapter can construct a model client at all (catches a missing
+ * SDK/bad config before a user ever types a prompt); 'run' sends one prompt and returns the
+ * real reply, same shape as the authoring adapter's own probe/generate split. */
+export const AGENT_CAPABILITY = 'agent';
+export const AGENT_OPERATIONS = ['probe', 'run'];
+
 /** Validate a 'generate' operation's output shape. Pure — no filesystem access; the caller
  * (demo/store.js) is responsible for containment-checking `sourcePath` against the workdir it
  * handed the adapter, since that check requires touching the filesystem (realpathSync) and

@@ -12,8 +12,11 @@ import { createGithubPublisher } from './github-publisher.js';
 import { createRuntimeAdapter } from './runtime-adapter.js';
 import { createGraduationAdapters } from './graduation-adapter.js';
 import { createAuthoringAdapter } from './authoring-adapter.js';
+import { createOrchestrationAdapter } from './orchestration-adapter.js';
+import { createAgentAdapter } from './agent-adapter.js';
 import { loadBrand } from './brand.js';
 import { principalFromProxyHeaders } from './proxy-auth.js';
+import { adminOverview,adminServices,adminLlmTest,adminOrchestrationTest,adminAgentTest } from './admin.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
@@ -51,7 +54,7 @@ const toolsList=[
   ['purge_application','Permanently remove an archived application: its record, invites, collaborator sessions and generated source workdir. Requires the application to be archived first. Refuses if it has been deployed unless force is set, in which case it is undeployed first on a best-effort basis. Irreversible.',{id:{type:'string'},force:{type:'boolean'}},['id']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
-export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter()}){
+export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter(),orchestration=createOrchestrationAdapter(),agent=createAgentAdapter()}){
   if(!ownerToken||ownerToken.length<32)throw new Error('Owner token must be at least 32 characters');
   const store=new Store(directory,builder,runtime,graduationAdapters,authoring);
   // Loopback aliases: 127.0.0.1 and localhost name the same machine at the same port/scheme, and this
@@ -80,7 +83,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         res.setHeader('Content-Type',assetPath.endsWith('.svg')?'image/svg+xml':assetPath.endsWith('.png')?'image/png':'application/octet-stream');
         return res.end(readFileSync(assetPath));
       }
-      if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css'].includes(path)){
+      if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css','/admin.html','/admin.js'].includes(path)){
         const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');
         let content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');
         if(file==='index.html'){
@@ -180,6 +183,20 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         // show "no AI configured" before the user writes a brief, per the original complaint.
         const authoring=await store.authoringStatus();
         return json(200,{kind:principal.kind,label:principal.label,email:principal.email||null,mode:builder.mode,authMode:principal.via==='proxy'?'proxy':'local',authoring});
+      }
+      // Admin console gate: owner kind AND the owner's own browser session, never a bearer
+      // token -- mirrors the one existing owner-only precedent, the GitHub publish routes
+      // above (see action.startsWith('github-')), so a CLI/MCP caller holding the owner
+      // token can never reach admin-only surface, only a human sitting at the browser can.
+      if(path.startsWith('/api/admin/')){
+        if(bearer||principal.kind!=='owner')throw new DemoError(403,'The admin console requires the owner browser session.');
+        const sub=path.slice('/api/admin/'.length);
+        if(sub==='overview'&&req.method==='GET')return json(200,adminOverview(store));
+        if(sub==='services'&&req.method==='GET')return json(200,await adminServices({runtime,orchestration}));
+        if(sub==='llm-test'&&req.method==='POST')return json(200,await adminLlmTest(body));
+        if(sub==='orchestration-test'&&req.method==='POST')return json(200,await adminOrchestrationTest({orchestration}));
+        if(sub==='agent-test'&&req.method==='POST')return json(200,await adminAgentTest({agent,prompt:body.prompt}));
+        throw new DemoError(404,'Not found');
       }
       const report=path.match(/^\/api\/apps\/([a-f0-9-]+)\/reports\/(arb|readiness|bom)$/);
       if(report&&req.method==='GET'){
