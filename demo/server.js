@@ -216,7 +216,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='github-config'&&req.method==='GET')return json(200,github.configuration());
         if(action.startsWith('github-')&&req.method==='POST'){
           if(bearer||principal.kind!=='owner')throw new DemoError(403,'Use the owner browser session to review and publish code');
-          if(action==='github-prepare')return json(200,github.prepare(app,body.repository));
+          if(action==='github-prepare')return json(200,github.prepare(app,body.repository,body.token||undefined));
           if(action==='github-publish'){
             const result=await github.publish(app,body);store.audit(app,'code published to '+result.repository+' at '+result.commit,principal);store.save();return json(200,result);
           }
