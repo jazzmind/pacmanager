@@ -43,7 +43,10 @@ const toolsList=[
   ['undeploy_application','Remove the deployed release via the runtime adapter. Refused unless the current release has been exported first (GET /api/apps/:id/export) — undeploy can permanently delete provisioned data.',{id:{type:'string'}},['id']],
   ['graduate_application','Generate a real graduation bundle (e.g. Jenkinsfile, workload.yml, image.yml) for a named platform via a configured graduation adapter (PAC_GRADUATION_ADAPTERS). This only generates files for review — it never commits, publishes, or triggers a pipeline on its own. Blocked if any declared service binding (envRefs) has no production equivalent (services catalog projection "local-only"), unless allowLocalOnly is set.',{id:{type:'string'},adapter:{type:'string'},target:{type:'string'},team:{type:'string'},repository:{type:'string'},registry:{type:'string'},image:{type:'string'},nexus:{type:'object'},resources:{type:'object'},allowLocalOnly:{type:'boolean'}},['id','adapter','target']],
   ['share_application','Grant a colleague access to this application by email (tenant SSO identity, not the label-based one-time invite). Owner-only. If the application is deployed, also pushes the updated allowlist to the runtime adapter so the deployed URL enforces it.',{id:{type:'string'},email:{type:'string'}},['id','email']],
-  ['unshare_application','Revoke a colleague\'s email-based access to this application. Owner-only.',{id:{type:'string'},email:{type:'string'}},['id','email']]
+  ['unshare_application','Revoke a colleague\'s email-based access to this application. Owner-only.',{id:{type:'string'},email:{type:'string'}},['id','email']],
+  ['archive_application','Archive an application: hides it from list_applications, reversible with unarchive_application. Changes nothing else — config, documents and deployments are untouched. This is the normal "delete" action; the app is still directly reachable by id until purged.',{id:{type:'string'}},['id']],
+  ['unarchive_application','Restore an archived application to list_applications.',{id:{type:'string'}},['id']],
+  ['purge_application','Permanently remove an archived application: its record, invites, collaborator sessions and generated source workdir. Requires the application to be archived first. Refuses if it has been deployed unless force is set, in which case it is undeployed first on a best-effort basis. Irreversible.',{id:{type:'string'},force:{type:'boolean'}},['id']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
 export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter()}){
@@ -158,6 +161,9 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'graduate_application':{const {id,adapter,...options}=a;output=await store.graduateApplication(principal,id,adapter,options);break;}
               case 'share_application':output={sharedWith:await store.shareWithEmail(principal,a.id,a.email)};break;
               case 'unshare_application':output={sharedWith:await store.unshareEmail(principal,a.id,a.email)};break;
+              case 'archive_application':output=store.archive(principal,a.id);break;
+              case 'unarchive_application':output=store.unarchive(principal,a.id);break;
+              case 'purge_application':output=await store.purge(principal,a.id,{force:Boolean(a.force)});break;
               default:throw new DemoError(400,'Unknown tool');
             }
             result={content:[{type:'text',text:JSON.stringify(output)}]};
@@ -199,10 +205,10 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       }
       if(path==='/api/logout'&&req.method==='POST'){store.state.sessions=store.state.sessions.filter(s=>s!==principal);store.save();cookie('');return json(200,{ok:true});}
       if(path==='/api/apps'){
-        if(req.method==='GET')return json(200,store.list(principal));
+        if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -221,6 +227,11 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='deployment-status')return json(200,await store.deploymentStatus(principal,id));
         if(action==='deployment-logs')return json(200,await store.deploymentLogs(principal,id,Number(url.searchParams.get('tail'))||100));
       }
+      // DELETE is archive, not purge -- soft, reversible, hides the app from list() and
+      // nothing else. Deliberately only reachable on the bare app path (no action suffix);
+      // purge is a POST action below because it takes an options body ({force}) and archive
+      // is a precondition for it, not something DELETE itself needs to express.
+      if(req.method==='DELETE'&&!action){store.archive(principal,id);return json(200,store.view(principal,id));}
       if(req.method!=='POST')throw new DemoError(405,'Method not allowed');
       switch(action){
         case 'definition':store.update(principal,id,body.config,body.revision);break;
@@ -236,6 +247,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'deploy':return json(202,await store.deployApplication(principal,id));
         case 'undeploy':return json(200,await store.undeployApplication(principal,id));
         case 'graduate':{const {adapter,...options}=body;return json(200,await store.graduateApplication(principal,id,adapter,options));}
+        case 'unarchive':store.unarchive(principal,id);break;
+        case 'purge':return json(200,await store.purge(principal,id,{force:Boolean(body.force)}));
         default:throw new DemoError(404,'Not found');
       }
       return json(200,store.view(principal,id));

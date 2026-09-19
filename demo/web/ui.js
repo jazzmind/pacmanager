@@ -3,6 +3,7 @@ const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearc
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
 async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
+async function apiDelete(path){const r=await fetch('/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
 // A legacy (kind-less) app keeps editing through the old two-value "template" layout picker,
 // exactly as before -- dual-accept, see demo/definition.js. Every other case (new apps always,
@@ -26,7 +27,10 @@ async function refresh(){
   me=await api('me');authoringBadge();
   apps=await api('apps');$('apps').innerHTML=apps.map(a=>`<button data-app="${a.id}" class="${a.id===selected?'active':''}">${esc(a.config.title)}<small>${a.published?'Published':a.generation?.status==='generating'?'Generating':a.build?.status||'Draft'} · ${a.documents} documents</small></button>`).join('');
   if(!selected&&apps.length)selected=apps[0].id;
-  if(selected){app=await api('apps/'+selected);draw();}
+  // selected can point at an app that's no longer in the list (archived, e.g. by the delete
+  // button below) -- fall back to the empty state instead of rendering a stale detail view.
+  if(selected&&apps.some(a=>a.id===selected)){app=await api('apps/'+selected);draw();}
+  else{selected=null;app=null;$('empty').hidden=false;$('detail').hidden=true;}
 }
 function draw(){
   $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title+(['static','app'].includes(app.config.tier)?' · generated app':'');
@@ -74,6 +78,12 @@ $('definition-form').onsubmit=action(async()=>{
 });
 for(const [id,route,message] of [['build','build','Build started. Activity updates below.'],['generate','generate','Generating your application…'],['bind','binding','Mock claims service bound.'],['publish','publish','Published internally. Invite your team from the Team tab.']])$(id).onclick=action(async()=>{await api('apps/'+app.id+'/'+route,{});if(id==='publish')published=true;await refresh();toast(message);});
 $('draft').onclick=()=>{published=false;draw();};$('published').onclick=()=>{published=true;draw();};
+$('delete').onclick=action(async()=>{
+  if(!confirm('Archive "'+app.config.title+'"? This hides it from your list — it isn’t permanently deleted, and an admin can restore or purge it later.'))return;
+  await apiDelete('apps/'+app.id);
+  await refresh();
+  toast('Archived.');
+});
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('selected',t===b));});
 $('search').oninput=docs;
 $('upload').onchange=action(async()=>{const file=$('upload').files[0];if(!file)return;if(file.size>256000)throw new Error('Choose a file under 256 KB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);await api('apps/'+app.id+'/documents',{name:file.name,base64:btoa(binary)});$('upload').value='';await refresh();toast('Document added to shared knowledge.');});
