@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin console</title>
+<link rel="icon" href="/brand/favicon"><link rel="stylesheet" href="/brand.css"><link rel="stylesheet" href="/style.css"><script type="module" src="/admin.js"></script></head><body>
+<section id="login" class="login"><div class="brand">Admin console</div><p class="eyebrow">OWNER ONLY</p><h1>Sign in as the workspace owner.</h1><form id="signin"><label>Workspace access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open admin console ↗</button></form><small>The MCP owner bearer token cannot open this page — a browser session is required.</small></section>
+<div id="console" hidden>
+<header><div><p class="eyebrow">ADMIN CONSOLE</p><h1>Services, agents and everything you're tracking.</h1></div><a href="/" class="button subtle">← Back to workspace</a></header>
+
+<section class="panel admin-panel"><div class="tab"><h2>Services</h2><p>Direct liveness probes. A missing adapter or env var renders as <code>absent</code>, not omitted.</p>
+<div id="services" class="admin-grid"></div><button id="refresh-services" class="subtle">↻ Refresh</button></div></section>
+
+<section class="panel admin-panel"><div class="tab"><h2>Test an LLM call</h2><p>Sends one real completion through the configured LiteLLM proxy — real tokens, real cost.</p>
+<form id="llm-form" class="admin-form"><label>Model<input id="llm-model" placeholder="local-qwen"></label><label>Prompt<textarea id="llm-prompt" required maxlength="4000" placeholder="Say hello in five words."></textarea></label><button>Run completion</button></form>
+<div id="llm-result" class="admin-result" hidden></div></div></section>
+
+<section class="panel admin-panel"><div class="tab"><h2>Temporal</h2><p>Health check plus the most recent workflow executions, via the orchestration adapter.</p>
+<button id="orchestration-test" class="subtle">Run health check</button><div id="orchestration-result" class="admin-result" hidden></div></div></section>
+
+<section class="panel admin-panel"><div class="tab"><h2>Agent</h2><p>Sends one prompt to the configured Strands agent adapter.</p>
+<form id="agent-form" class="admin-form"><label>Prompt<textarea id="agent-prompt" required maxlength="4000" placeholder="What's on my calendar today?"></textarea></label><button>Run agent</button></form>
+<div id="agent-result" class="admin-result" hidden></div></div></section>
+
+<section class="panel admin-panel"><div class="tab"><h2>All applications</h2><p id="totals"></p><div id="apps-table"></div></div></section>
+
+<section class="panel admin-panel"><div class="tab"><h2>Activity log</h2><p>The most recent 50 events across every application.</p><div id="audit-feed"></div></div></section>
+</div>
+<div id="toast" role="status" hidden></div>
+</body></html>
