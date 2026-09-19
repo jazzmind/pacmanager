@@ -1,15 +1,19 @@
 import { initGraduation } from './graduation-ui.js';
-const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='',historyOpen=false,selectedRelease=null;
+const $=id=>document.getElementById(id);
+let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='',historyOpen=false,selectedRelease=null,currentCards=[];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
-// hotlinking allowed, and deploykit's webUI already learned that the hard way). Purely cosmetic:
-// a two-stop gradient plus one circle, both derived from the app id so the same app always
-// renders the same art without storing anything.
+// hotlinking allowed, and deploykit's webUI already learned that the hard way). Colors are read
+// from the ACTIVE brand pack's own CSS custom properties at paint time, not hardcoded or
+// HSL-rotated -- a random hue rotation produced off-brand magenta/olive art regardless of which
+// pack (Plymouth Rock or the OSS default) was loaded. Still fully deterministic per app id.
+const BRAND_ART_TOKENS=['brand','brand-dark','accent','navy'];
+function brandColor(name,fallback){const v=getComputedStyle(document.documentElement).getPropertyValue('--pac-'+name).trim();return v||fallback;}
 function placeholderArt(seed){
   let h=0;for(const c of seed)h=(h*31+c.charCodeAt(0))>>>0;
-  const hue1=h%360,hue2=(hue1+40)%360;
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue1},55%,55%)"/><stop offset="1" stop-color="hsl(${hue2},55%,38%)"/></linearGradient></defs><rect width="200" height="120" fill="url(#g)"/><circle cx="${40+h%110}" cy="${25+h%55}" r="30" fill="rgba(255,255,255,0.16)"/></svg>`;
+  const c1=brandColor(BRAND_ART_TOKENS[h%4],'#0078d6'),c2=brandColor(BRAND_ART_TOKENS[(h+1+h%3)%4],'#0351aa');
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs><rect width="200" height="120" fill="url(#g)"/><circle cx="${40+h%110}" cy="${25+h%55}" r="30" fill="rgba(255,255,255,0.16)"/></svg>`;
   return 'data:image/svg+xml,'+encodeURIComponent(svg);
 }
 function statusOf(a){
@@ -28,15 +32,23 @@ function renderHome(){
   const email=me?.email,isAdmin=me.kind==='owner';
   const mine=email?apps.filter(a=>a.ownerEmail===email):(isAdmin?apps:[]);
   const shared=email?apps.filter(a=>(a.sharedWith||[]).includes(email)):[];
+  const mineIds=new Set(mine.map(a=>a.id));
+  // "All applications" only ever shows what ISN'T already shown above -- the old version showed
+  // the exact same list twice under "My applications" and "All applications" whenever the
+  // signed-in principal owned everything (the common single-owner local case).
+  const extra=isAdmin?apps.filter(a=>!mineIds.has(a.id)):[];
+  $('home-summary').textContent=`${apps.length} application${apps.length===1?'':'s'} · ${apps.filter(a=>a.published).length} published`;
   $('cards-mine').innerHTML=mine.map(cardHtml).join('')||'<p>Nothing yet — create your first application.</p>';
-  $('shelf-shared').hidden=!email;
-  $('cards-shared').innerHTML=shared.map(cardHtml).join('')||'<p>Nothing shared with you yet.</p>';
-  $('shelf-all').hidden=!isAdmin;
-  if(isAdmin)$('cards-all').innerHTML=apps.map(cardHtml).join('')||'<p>No applications yet.</p>';
+  $('shelf-shared').hidden=!shared.length;$('cards-shared').innerHTML=shared.map(cardHtml).join('');
+  $('shelf-all').hidden=!extra.length;$('cards-all').innerHTML=extra.map(cardHtml).join('');
+}
+function updateCrumb(view){
+  $('crumb-current').hidden=view!=='detail';
+  if(view==='detail')$('crumb-select').innerHTML=apps.map(a=>`<option value="${a.id}"${a.id===app.id?' selected':''}>${esc(a.config.title)}</option>`).join('');
 }
 function showView(v){
   $('empty').hidden=v!=='empty';$('home').hidden=v!=='home';$('detail').hidden=v!=='detail';
-  $('home-nav').classList.toggle('active',v==='home');
+  updateCrumb(v);
 }
 
 // What each artifact kind is, what it genuinely cannot do, and one worked example -- shown in
@@ -66,41 +78,99 @@ function editor(isEdit){
   $('kind-guidance').hidden=legacy;updateKindGuidance();
   $('editor').showModal();
 }
-function authoringBadge(){
-  const a=me?.authoring,badge=$('authoring-badge');badge.hidden=!a||a.available;
-  if(a&&!a.available)badge.textContent=a.state==='not_configured'?'⚠ No AI connected':a.state==='credential_missing'?'⚠ AI credential missing':'⚠ AI gateway unreachable';
+
+let graduation;
+// Every card button runs one of these, then the caller refreshes and (if a message came back)
+// toasts it -- keeps each action self-contained instead of scattering confirm()/toast() calls
+// across a dozen individual button handlers like the old toolbar did.
+const RUN={
+  generate:async()=>{await api('apps/'+app.id+'/generate',{});return 'Generating…';},
+  build:async()=>{await api('apps/'+app.id+'/build',{});return 'Build started.';},
+  publish:async()=>{await api('apps/'+app.id+'/publish',{});published=true;return 'Published.';},
+  bind:async()=>{await api('apps/'+app.id+'/binding',{});return 'Mock claims service bound.';},
+  invite:async()=>{$('invite-url').hidden=true;$('invite-form').hidden=false;$('invite-dialog').showModal();return null;},
+  graduate:async()=>{await graduation.open();return null;},
+  regenerate:async()=>{
+    if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return null;
+    await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
+    api('apps/'+app.id+'/generate',{}).then(refresh).catch(error=>toast(error.message));
+    return 'Regenerating from scratch…';
+  },
+  delete:async()=>{
+    if(!confirm('Archive "'+app.config.title+'"? This hides it from your list — it isn’t permanently deleted, and an admin can restore or purge it later.'))return null;
+    await apiDelete('apps/'+app.id);selected=null;
+    return 'Archived.';
+  },
+};
+// The single source of "what can I do, and why" -- a pure function of the app's real state, so
+// it's always in sync with what's actually possible (unlike the old always-on button bar, which
+// showed every action regardless of whether it made sense right now).
+function proposals(){
+  const isOwner=me.kind==='owner',hasKind=Boolean(app.config.kind),hasSource=['static','app'].includes(app.config.tier);
+  if(app.generation?.status==='generating')return [{tone:'info',busy:true,title:'Generating…',body:`Authoring via ${app.generation.model||'the configured model'}. This usually takes under a minute.`}];
+  if(app.build?.status==='building')return [{tone:'info',busy:true,title:'Building…',body:'Compiling and running the safety checks required before preview or publish.'}];
+  const cards=[];
+  const checks=app.build?.result?.checks||[],passed=checks.filter(c=>c.passed).length;
+  const nextRelease=(app.release?.number||0)+1;
+  if(hasKind&&!hasSource){
+    const failed=app.generation?.status==='failed';
+    cards.push({tone:failed?'warn':'action',title:failed?'Generation failed':'Not generated yet',body:failed?'The last attempt failed — see the log below. Retry, or describe the change you actually want.':'Ask for it below, or click Generate to author it from the brief.',actions:[{label:failed?'Retry generation':'Generate',run:'generate'}]});
+  }else if(app.build?.status!=='ready'||app.build.revision!==app.revision){
+    cards.push({tone:'action',title:'Build this app',body:'Compiles the current definition and runs the safety checks required before preview or publish.',actions:[{label:'Build application',run:'build'}]});
+  }else if(!app.release||app.release.revision!==app.build.revision){
+    cards.push({tone:'primary',title:'Ready to publish',body:`Build passed ${passed}/${checks.length} checks${app.build.result?.sourceDigest?' ('+app.build.result.sourceDigest.slice(0,10)+')':''} and hasn't been released yet. Publishing makes it v${nextRelease} — the version your team sees.`,actions:[{label:'Publish as v'+nextRelease,run:'publish'}]});
+  }else{
+    cards.push({tone:'ok',title:'Published · v'+app.release.number,body:`Live since ${new Date(app.release.publishedAt).toLocaleString()}. ${app.revision!==app.release.revision?'The draft has unpublished changes.':'The draft matches the published release.'}`});
+  }
+  if(isOwner){
+    if(!app.binding)cards.push({tone:'action',title:'Bind mock claims',body:'Grants access to synthetic claims data for testing. No live service.',actions:[{label:'Bind mock claims',run:'bind'}]});
+    cards.push({tone:'action',title:'Invite a colleague',body:'A one-time link, valid 24 hours, scoped to this application.',actions:[{label:'Create invitation',run:'invite'}]});
+    if(app.release)cards.push({tone:'action',title:'Download graduation package',body:'The published app, source, documents and build evidence.',actions:[{label:'Download',href:'/api/apps/'+app.id+'/export'}]});
+    cards.push({tone:'action',title:'Graduate',body:'Governance docs (ARB, readiness, BOM) and an optional review-then-publish to GitHub. Nothing sends without your confirmation.',actions:[{label:'Open graduation',run:'graduate'}]});
+    if(hasSource)cards.push({tone:'danger',title:'Regenerate from scratch',body:'Discards the current source and starts over from the brief. Cannot be undone — though any already-published release can still be rolled back to.',actions:[{label:'Regenerate from scratch',run:'regenerate'}]});
+    cards.push({tone:'danger',title:'Delete',body:'Archives it — reversible, hides it from your list. An admin can restore or permanently purge it later.',actions:[{label:'Delete',run:'delete'}]});
+  }
+  return cards;
+}
+function renderCards(){
+  currentCards=proposals();
+  $('chat-cards').innerHTML=currentCards.map((c,ci)=>`<div class="chat-card tone-${c.tone}${c.busy?' busy':''}"><strong>${esc(c.title)}</strong><p>${esc(c.body)}</p>${(c.actions||[]).map((a,ai)=>a.href?`<a class="button" href="${a.href}">${esc(a.label)}</a>`:`<button data-card="${ci}" data-action="${ai}">${esc(a.label)}</button>`).join('')}</div>`).join('');
+}
+// The thread merges audit[] (system events -- created, published, rolled back, document
+// uploaded...) with comments[] (human notes) into one chronological record. Both already
+// existed in the API response; audit[] specifically was fetched every 2s and never shown.
+function renderThread(){
+  const events=[
+    ...(app.audit||[]).map(e=>({at:e.at,kind:'audit',text:e.event,actor:e.actor})),
+    ...(app.comments||[]).map(c=>({at:c.createdAt,kind:'note',text:c.text,actor:c.author})),
+    // Raw generation/build log lines (including failure reasons and the model that ran) --
+    // previously shown in a details block that this redesign removed; folded into the same
+    // thread rather than dropped, which is also where proposals()'s "see the log below" points.
+    ...(app.generation?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:app.generation.model||null})),
+    ...(app.build?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:null})),
+  ].sort((a,b)=>new Date(a.at)-new Date(b.at));
+  const thread=$('chat-thread');
+  const wasAtBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<40;
+  thread.innerHTML=events.map(e=>`<div class="thread-item thread-${e.kind}"><span class="thread-text">${esc(e.text)}</span><span class="thread-meta">${esc(e.actor||'')} · ${new Date(e.at).toLocaleString()}</span></div>`).join('')||'<p class="hint">No activity yet. Ask for a change below to get started.</p>';
+  if(wasAtBottom)thread.scrollTop=thread.scrollHeight;
 }
 const autoBuiltRevision={};
 async function refresh(){
-  me=await api('me');authoringBadge();
-  document.querySelectorAll('.owner').forEach(el=>el.hidden=me.kind!=='owner');$('admin-link').hidden=me.kind!=='owner';
-  apps=await api('apps');$('apps').innerHTML=apps.map(a=>`<button data-app="${a.id}" class="${a.id===selected?'active':''}">${esc(a.config.title)}<small>${a.published?'Published':a.generation?.status==='generating'?'Generating':a.build?.status||'Draft'} · ${a.documents} documents</small></button>`).join('');
+  me=await api('me');
+  $('admin-link').hidden=me.kind!=='owner';$('new').hidden=me.kind==='collaborator';
+  apps=await api('apps');
   if(!apps.length){selected=null;app=null;showView('empty');return;}
   // selected can point at an app that's no longer in the list (archived, e.g. by the delete
-  // button below) -- fall back to the home view, not a stale detail view.
+  // action below) -- fall back to the home view, not a stale detail view.
   if(selected&&apps.some(a=>a.id===selected)){app=await api('apps/'+selected);showView('detail');draw();}
   else{selected=null;app=null;renderHome();showView('home');}
 }
 function draw(){
-  $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title+(['static','app'].includes(app.config.tier)?' · generated app':'');
   const isLive=app.generation?.status==='generating'||app.build?.status==='building';
   $('status').textContent=app.generation?.status==='generating'?'Generating…':app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
   $('status').classList.toggle('live',isLive);
-  $('build').disabled=app.build?.status==='building'||app.generation?.status==='generating';$('publish').disabled=app.build?.status!=='ready'||app.build.revision!==app.revision;
-  if(!app.config.kind)$('generate').hidden=true; // the owner-only toggle in refresh() already hides it from non-owners
-  // Once real source exists, editing means requesting a targeted change (revise), not
-  // reopening the full brief editor -- see demo/store.js's startGeneration changeRequest
-  // requirement. "Regenerate from scratch" is the separate, explicit, destructive escape hatch.
-  const hasSource=['static','app'].includes(app.config.tier);
-  $('edit').textContent=hasSource?'Request a change':'Edit brief';
-  $('regenerate').hidden=me.kind!=='owner'||!hasSource;
-  $('generate').disabled=app.generation?.status==='generating';$('generate').textContent=app.generation?.status==='failed'?'Retry generation':'Generate';
-  $('mode').textContent=app.build?.mode||me.mode;
-  const logs=[...(app.generation?.logs||[]),...(app.build?.logs||[])];
-  $('logs').innerHTML=(logs.length?logs:[{text:app.config.tier==='intent'?'Generating happens automatically after you save a brief.':'Save a definition, then build.'}]).map(l=>`<li>${esc(l.text)}</li>`).join('');
   // Once generation lands, build automatically -- describing a brief should produce a working
-  // preview in one motion, per the original complaint ("I asked it to make a game and it
-  // didn't"). Guarded by revision so it only fires once per successful generation.
+  // preview in one motion. Guarded by revision so it only fires once per successful generation.
   if(app.generation?.status==='ready'&&app.generation.revision===app.revision&&autoBuiltRevision[app.id]!==app.revision&&app.build?.status!=='building'){
     autoBuiltRevision[app.id]=app.revision;
     api('apps/'+app.id+'/build',{}).then(refresh).catch(error=>toast(error.message));
@@ -108,13 +178,11 @@ function draw(){
   const ready=published?Boolean(app.release):app.build?.status==='ready';const url='/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
   const key=[app.id,published,app.build?.id,app.build?.status,app.release?.number,app.documents.length,app.comments.length,app.binding].join(':');
   $('preview').hidden=!ready;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
-  $('open-preview').href=url;$('open-preview').hidden=!ready;$('preview-label').textContent=published?'Published release · v'+(app.release?.number||'—'):'Draft application preview';
+  $('open-preview').href=url;$('open-preview').hidden=!ready;
   $('canvas-view').hidden=historyOpen;$('history-view').hidden=!historyOpen;
   $('draft').classList.toggle('selected',!published&&!historyOpen);$('published').classList.toggle('selected',published&&!historyOpen);$('history').classList.toggle('selected',historyOpen);
   if(historyOpen)renderHistory();
-  docs();$('comments').innerHTML=app.comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><p>${esc(c.text)}</p><small>${esc(new Date(c.createdAt).toLocaleTimeString())}</small></div>`).join('')||'<p>No notes yet. Start the conversation.</p>';
-  $('binding-state').textContent=app.binding?'Connected · '+app.claims.length+' synthetic claims':'Not connected';$('bind').disabled=app.binding;$('bind').textContent=app.binding?'Mock service bound ✓':'Bind mock claims';$('export').href='/api/apps/'+app.id+'/export';$('export').hidden=!app.release||me.kind!=='owner';
-  $('release').textContent=app.release?`Internal release v${app.release.number} · Definition revision ${app.release.revision} · Documents and discussion remain shared. ${app.revision!==app.release.revision?'Unpublished changes in draft.':''}`:'Visible to this workspace only. Publish when your team is ready.';
+  renderCards();renderThread();
 }
 // "View earlier versions" as a real affordance, not just a number/date list with a blind
 // rollback button: the right pane actually previews the selected release's own frozen content
@@ -131,18 +199,19 @@ function renderHistory(){
   $('history-preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');
   $('history-preview').src=selectedRelease?'/api/apps/'+app.id+'/preview?release='+selectedRelease:'';
 }
-function docs(){const q=$('search').value.toLowerCase();$('documents').innerHTML=app.documents.filter(d=>(d.name+' '+d.text).toLowerCase().includes(q)).map(d=>`<div class="document"><strong>▤ ${esc(d.name)}</strong><p>${esc(d.text.slice(0,160)||'PDF attachment · no extracted text')}</p><small>${esc(d.author)} · ${Math.ceil(d.size/1024)} KB</small></div>`).join('')||'<p>No matching documents yet.</p>';}
-async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('new').hidden=me.kind!=='owner';$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';authoringBadge();await refresh();}
+async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';await refresh();}
 $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').value});$('token').value='';await enter();});
 $('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
 $('new').onclick=$('start').onclick=()=>editor(false);
-$('edit').onclick=()=>{if(['static','app'].includes(app.config.tier))$('revise').showModal();else editor(true);};
-$('connect').onclick=()=>$('connection').showModal();
+$('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
 $('kind').onchange=updateKindGuidance;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
+$('crumb-home').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
+$('crumb-select').onchange=action(async()=>{selected=$('crumb-select').value;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
 const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
-$('apps').onclick=openApp;$('home').onclick=openApp;
-$('home-nav').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
+$('home').onclick=openApp;
+$('user-toggle').onclick=e=>{e.stopPropagation();$('user-dropdown').hidden=!$('user-dropdown').hidden;};
+document.addEventListener('click',()=>{$('user-dropdown').hidden=true;});
 $('definition-form').onsubmit=action(async()=>{
   const legacy=editing&&!app.config.kind;
   const base={title:$('app-title').value,brief:$('brief').value,accent:$('accent').value};
@@ -156,27 +225,14 @@ $('definition-form').onsubmit=action(async()=>{
   toast('Definition saved. Generating your application…');
   api('apps/'+selected+'/generate',{}).then(refresh).catch(error=>toast(error.message));
 });
-for(const [id,route,message] of [['build','build','Build started. Activity updates below.'],['generate','generate','Generating your application…'],['bind','binding','Mock claims service bound.'],['publish','publish','Published internally. Invite your team from the Team tab.']])$(id).onclick=action(async()=>{await api('apps/'+app.id+'/'+route,{});if(id==='publish')published=true;await refresh();toast(message);});
 $('draft').onclick=()=>{published=false;historyOpen=false;draw();};$('published').onclick=()=>{published=true;historyOpen=false;draw();};$('history').onclick=()=>{historyOpen=true;draw();};
-$('delete').onclick=action(async()=>{
-  if(!confirm('Archive "'+app.config.title+'"? This hides it from your list — it isn’t permanently deleted, and an admin can restore or purge it later.'))return;
-  await apiDelete('apps/'+app.id);
-  await refresh();
-  toast('Archived.');
-});
-$('revise-form').onsubmit=action(async()=>{
-  const changeRequest=$('change-request').value;
-  await api('apps/'+app.id+'/generate',{changeRequest});
-  $('revise').close();$('change-request').value='';
-  await refresh();
-  toast('Requesting change…');
-});
-$('regenerate').onclick=action(async()=>{
-  if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return;
-  await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
-  await refresh();
-  toast('Regenerating from scratch…');
-  api('apps/'+app.id+'/generate',{}).then(refresh).catch(error=>toast(error.message));
+$('chat-cards').onclick=action(async e=>{
+  const b=e.target.closest('[data-card]');if(!b)return;
+  const card=currentCards[Number(b.dataset.card)],act=card.actions[Number(b.dataset.action)];
+  if(!act.run)return;
+  b.disabled=true;
+  try{const message=await RUN[act.run]();await refresh();if(message)toast(message);}
+  finally{if(app)b.disabled=false;}
 });
 $('release-history-full').onclick=e=>{
   const b=e.target.closest('[data-release]');if(!b)return;
@@ -188,13 +244,18 @@ $('history-rollback').onclick=action(async()=>{
   historyOpen=false;published=true;await refresh();
   toast('Rolled back to v'+selectedRelease+' (as a new release).');
 });
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('selected',t===b));});
-$('search').oninput=docs;
-$('upload').onchange=action(async()=>{const file=$('upload').files[0];if(!file)return;if(file.size>256000)throw new Error('Choose a file under 256 KB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);await api('apps/'+app.id+'/documents',{name:file.name,base64:btoa(binary)});$('upload').value='';await refresh();toast('Document added to shared knowledge.');});
-$('note').onsubmit=action(async()=>{await api('apps/'+app.id+'/comments',{text:$('note-text').value});$('note-text').value='';await refresh();});
-$('invite').onclick=()=>{$('invite-url').hidden=true;$('invite-form').hidden=false;$('invite-dialog').showModal();};
+$('upload').onchange=action(async()=>{const file=$('upload').files[0];if(!file)return;if(file.size>256000)throw new Error('Choose a file under 256 KB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);await api('apps/'+app.id+'/documents',{name:file.name,base64:btoa(binary)});$('upload').value='';await refresh();toast('Document added.');});
+$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('chat-form').requestSubmit();}});
+$('chat-form').onsubmit=action(async()=>{
+  const text=$('chat-input').value.trim();if(!text)return;
+  const hasSource=['static','app'].includes(app.config.tier);
+  $('chat-input').value='';
+  if(hasSource){await api('apps/'+app.id+'/generate',{changeRequest:text});toast('Requesting change…');}
+  else await api('apps/'+app.id+'/comments',{text});
+  await refresh();
+});
 $('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id+'/invite',{label:$('colleague').value});$('invite-url').value=result.url;$('invite-url').hidden=false;$('invite-form').hidden=true;$('invite-url').select();});
 const invitation=new URLSearchParams(location.hash.slice(1)).get('invite');if(invitation){history.replaceState(null,'',location.pathname+location.search);try{await api('session',{token:invitation});}catch(error){toast(error.message);}}
 try{await enter();}catch{/* Login is shown until authenticated. */}
-initGraduation({api,action,$,getApp:()=>app,getMe:()=>me,toast,esc});
+graduation=initGraduation({api,action,$,getApp:()=>app,getMe:()=>me,toast,esc});
 setInterval(()=>{if(me&&!document.hidden)refresh().catch(error=>toast(error.message));},2000);
