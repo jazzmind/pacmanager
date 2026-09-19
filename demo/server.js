@@ -97,7 +97,12 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
             // needs its own marker pointing back at `logo` — don't "fix" this again by
             // recoloring the SVG with a CSS filter, the brand pack's lint.forbidLogoRecolor
             // rule exists specifically to prevent that.
-            .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logoMono')?`<img class="brand-logo" src="/brand/logoMono" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
+            .replace(/\{\{PAC_LOGO_HTML\}\}/g,brand.assetPath('logoMono')?`<img class="brand-logo" src="/brand/logoMono" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`)
+            // The one dark surface in the app (the top workspace bar) needs the OTHER logo
+            // variant -- the white/reverse `logo` asset, not `logoMono` (see the comment just
+            // above: logoMono is for light surfaces only, verified live at ~1.1:1 contrast on
+            // dark). No CSS-filter recoloring here either, same lint.forbidLogoRecolor reason.
+            .replace(/\{\{PAC_LOGO_REVERSE_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
           content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.keys(brand.accentPalette()).map(k=>`<option value="${escape(k)}">${escape(brand.accentLabel(k))}</option>`).join(''));
         }
         return res.end(content);

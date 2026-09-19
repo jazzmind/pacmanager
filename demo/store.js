@@ -280,7 +280,7 @@ export class Store {
     if(app.documents.length>=20)fail(429,'20-document demo limit reached');
     if(/\.pdf$/i.test(input.name)&&bytes.subarray(0,5).toString()!=='%PDF-')fail(400,'Invalid PDF header');
     const doc={id:id(),name:input.name,size:bytes.length,base64:bytes.toString('base64'),text:/\.(txt|md)$/i.test(input.name)?bytes.toString('utf8'):'',author:p.label,createdAt:now(),sha256:sha(bytes)};
-    app.documents.push(doc);this.audit(app,'document uploaded',p);this.save();return {id:doc.id,name:doc.name};
+    app.documents.push(doc);this.audit(app,'document uploaded: '+doc.name,p);this.save();return {id:doc.id,name:doc.name};
   }
   comment(p,appId,text){const app=this.access(p,appId);if(typeof text!=='string'||!text.trim()||text.length>3000)fail(400,'Note must be 1–3000 characters');if(app.comments.length>=500)fail(429,'Comment limit reached');app.comments.push({id:id(),text:text.trim(),author:p.label,createdAt:now()});this.save();}
   recordBriefing(p,appId,input){

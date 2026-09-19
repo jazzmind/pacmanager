@@ -1,30 +1,68 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{PAC_PRODUCT_NAME}} · Create with confidence</title>
 <link rel="icon" href="/brand/favicon"><link rel="stylesheet" href="/brand.css"><link rel="stylesheet" href="/style.css"><script type="module" src="/ui.js"></script></head><body>
+<svg hidden aria-hidden="true" id="icons"><defs>
+<symbol id="icon-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+<symbol id="icon-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+<symbol id="icon-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
+<symbol id="icon-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+<symbol id="icon-undo" viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></symbol>
+<symbol id="icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+<symbol id="icon-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+<symbol id="icon-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+<symbol id="icon-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+<symbol id="icon-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+<symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+<symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+<symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+<symbol id="icon-sparkle" viewBox="0 0 24 24"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z"/><path d="M19 15l.8 2.4L22 18l-2.2.6L19 21l-.8-2.4L16 18l2.2-.6L19 15z"/></symbol>
+</defs></svg>
 <section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A workspace for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Workspace access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open workspace ↗</button></form><small>Local demo · Synthetic business data only</small></section>
-<div id="workspace" hidden><aside class="sidebar"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">WORKSPACE</p><button id="new" class="primary">＋ New application</button><button id="home-nav" class="home-nav active">🏠 Home</button><nav id="apps"></nav><div class="sidebar-bottom"><a id="admin-link" class="button subtle nav-link" href="/admin.html" hidden>⚙ Admin console</a><button id="connect" class="subtle">↔ Connect your AI</button><p id="identity"></p><button id="logout" class="subtle">Sign out</button><small>Open source. Built to move with you.</small></div></aside>
-<main><header><div><p class="eyebrow">PLYMOUTH ROCK / ARTIFACT STUDIO</p><h1 id="title">Make something useful.</h1></div><span id="authoring-badge" class="badge warn" hidden></span><span id="status" class="badge">Ready to create</span></header><div class="steps"><span>01 Connect</span><span>02 Describe</span><span>03 Build</span><span>04 Preview</span><span>05 Collaborate</span><span>06 Bind</span><span>07 Publish</span><span>08 Graduate</span></div>
-<div id="empty" class="empty"><span class="hero-symbol">✳</span><h2>An idea deserves a working version.</h2><p>Connect Claude to describe your application, or start with a guided template.<br>Every application gets its own documents, discussion and release history.</p><button id="start">Create your first application ↗</button></div>
+<div id="workspace" hidden>
+<header id="topbar">
+  <button id="crumb-home" class="crumb-home">{{PAC_LOGO_REVERSE_HTML}}<span>Workspace</span></button>
+  <div class="crumb-current" id="crumb-current" hidden><svg class="icon"><use href="#icon-chevron-down" transform="rotate(-90 12 12)"/></svg><select id="crumb-select" aria-label="Switch application"></select></div>
+  <div class="topbar-right">
+    <button id="new"><svg class="icon"><use href="#icon-plus"/></svg>New application</button>
+    <div class="usermenu">
+      <button id="user-toggle" class="usermenu-toggle"><span id="identity"></span><svg class="icon"><use href="#icon-chevron-down"/></svg></button>
+      <div id="user-dropdown" class="usermenu-dropdown" hidden>
+        <a id="admin-link" href="/admin.html" hidden><svg class="icon"><use href="#icon-settings"/></svg>Admin console</a>
+        <button id="connect"><svg class="icon"><use href="#icon-link"/></svg>Connect your AI</button>
+        <button id="logout"><svg class="icon"><use href="#icon-logout"/></svg>Sign out</button>
+      </div>
+    </div>
+  </div>
+</header>
+<main>
+<div id="empty" class="empty" hidden><svg class="icon hero-icon"><use href="#icon-sparkle"/></svg><h2>An idea deserves a working version.</h2><p>Connect Claude to describe your application, or start with a guided template.<br>Every application gets its own chat, history and release record.</p><button id="start" class="primary">Create your first application ↗</button></div>
 <section id="home" hidden>
-  <div class="hero"><span class="hero-symbol">✳</span><h2>Your workspace.</h2><p>Everything you've built, everything shared with you, and — if you're the owner — everything anyone has built here.</p></div>
+  <div class="home-head"><div><h1>Your workspace</h1><p id="home-summary"></p></div></div>
   <div class="shelf" id="shelf-mine"><h3>My applications</h3><div class="cards" id="cards-mine"></div></div>
   <div class="shelf" id="shelf-shared" hidden><h3>Shared with me</h3><div class="cards" id="cards-shared"></div></div>
   <div class="shelf" id="shelf-all" hidden><h3>All applications</h3><div class="cards" id="cards-all"></div></div>
 </section>
-<section id="detail" hidden><div class="toolbar">
-  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button></div>
-  <div class="toolbar-actions">
-    <div class="action-group owner"><button id="edit" class="ghost">Edit brief</button><button id="generate" class="ghost">Generate</button><button id="build" class="ghost">Build application</button></div>
-    <div class="action-group owner"><button id="publish" class="primary">Publish internally ↗</button></div>
-    <div class="action-group owner danger-group"><button id="regenerate" class="danger-ghost" title="Destructive: discards current source and starts over" hidden>Regenerate from scratch</button><button id="delete" class="danger-ghost" title="Archive — reversible, hides it from your list">Delete</button></div>
+<section id="detail" hidden>
+<div class="workgrid">
+  <div class="canvas" id="canvas-view">
+    <div class="browserbar">
+      <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button></div>
+      <span id="status" class="badge"></span>
+      <a id="open-preview" target="_blank" rel="noopener">Open<svg class="icon"><use href="#icon-external"/></svg></a>
+    </div>
+    <iframe id="preview" title="Application preview" sandbox=""></iframe>
+    <div id="preview-empty"><h2>Your application starts here.</h2><p>Ask for it in the chat, or build the current definition to see a live preview.</p></div>
   </div>
+  <div class="canvas history-view" id="history-view" hidden><div class="browserbar"><span>Release history — select a version to preview it</span><button id="history-rollback" class="ghost" hidden><svg class="icon"><use href="#icon-undo"/></svg>Roll back to this version</button></div><div class="history-body"><div class="release-list" id="release-history-full"></div><iframe id="history-preview" title="Historical release preview" sandbox=""></iframe></div></div>
+  <aside class="chat-panel">
+    <div class="chat-cards" id="chat-cards"></div>
+    <div class="chat-thread" id="chat-thread"></div>
+    <form id="chat-form" class="chat-form"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-doc"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Describe a change, or leave a note…"></textarea><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></form>
+  </aside>
 </div>
-<div class="workgrid"><div class="canvas" id="canvas-view"><div class="browserbar"><i></i><i></i><i></i><span id="preview-label">Isolated application preview</span><a id="open-preview" target="_blank" rel="noopener">Open ↗</a></div><iframe id="preview" title="Application preview" sandbox=""></iframe><div id="preview-empty"><h2>Your application starts here.</h2><p>Build the current definition to see a live preview.</p></div><details open class="buildlog"><summary>Build activity <span id="mode"></span></summary><ol id="logs"></ol></details></div>
-<div class="canvas history-view" id="history-view" hidden><div class="browserbar"><i></i><i></i><i></i><span>Release history — select a version to preview it</span><button id="history-rollback" class="subtle owner" hidden>Roll back to this version ↺</button></div><div class="history-body"><div class="release-list" id="release-history-full"></div><iframe id="history-preview" title="Historical release preview" sandbox=""></iframe></div></div>
-<aside class="panel"><div class="tabs"><button data-tab="knowledge" class="selected">Knowledge</button><button data-tab="discussion">Team</button><button data-tab="capabilities">Access</button></div><section id="knowledge" class="tab"><p class="eyebrow">SHARED CONTEXT</p><h2>Bring your knowledge.</h2><p>Upload notes and reference documents for this application.</p><label class="upload">＋ Add a document<input id="upload" type="file" accept=".txt,.md,.pdf"></label><small>TXT, Markdown or PDF · Up to 256 KB<br>PDF stored as attachment; text extraction not enabled.</small><input id="search" placeholder="Search document text" aria-label="Search documents"><div id="documents"></div></section>
-<section id="discussion" class="tab" hidden><p class="eyebrow">WORK BETTER TOGETHER</p><h2>A shared conversation.</h2><button id="invite" class="owner subtle">＋ Invite a colleague</button><div id="comments"></div><form id="note"><label>Leave a note<textarea id="note-text" required maxlength="3000" placeholder="What should we improve?"></textarea></label><button>Post note</button></form><small>Updates sync every two seconds.</small></section>
-<section id="capabilities" class="tab" hidden><p class="eyebrow">EXPLICIT CONNECTIONS</p><h2>Open only what you need.</h2><div class="cap"><strong>Claims service</strong><p id="binding-state">Not connected</p><button id="bind" class="owner">Bind mock claims</button><small>Synthetic fixtures only. Live API access is not implemented.</small></div><div class="cap"><strong>Take your work with you.</strong><p>Download the published app, source, documents and build evidence.</p><a id="export" class="button owner">Download graduation package ↓</a></div><small>Demo contract checks run on every build. SpecGuard integration is not configured.</small></section></aside></div><footer id="release"></footer></section></main></div>
+</section>
+</main>
+</div>
 <dialog id="editor"><form id="definition-form"><p class="eyebrow">FROM IDEA TO APPLICATION</p><h2 id="editor-title">What would you like to build?</h2><label>Application name<input id="app-title" required minlength="3" maxlength="80" placeholder="Claims team workspace"></label><label>Describe what your team needs<textarea id="brief" required minlength="10" maxlength="3000" placeholder="A clone of the arcade game Tapper, insurance themed. Or: help adjusters review synthetic claims, share guidance and discuss follow-ups."></textarea></label><div class="fields"><label id="kind-field">What are you building?<select id="kind"><option value="interactive">Interactive page or game</option><option value="knowledge">Knowledge workspace / digital expert</option><option value="application">Application (client + API)</option><option value="auto">Let it decide</option></select></label><label id="template-field" hidden>Layout<select id="template"><option value="claims">Claims workbench</option><option value="knowledge">Knowledge workspace</option></select></label><label>Accent<select id="accent">{{PAC_ACCENT_OPTIONS}}</select></label></div><div class="hint" id="kind-guidance"></div><p class="hint" id="editor-hint">Real, working source is generated for this brief — not a template with the title pasted in.</p><p class="hint warn" id="editor-authoring-warning" hidden>No AI connected yet — this saves as a draft. Ask your admin to set PAC_AUTHORING_ADAPTER, then generate it from here.</p><div class="dialog-actions"><button type="button" data-close="editor" class="subtle">Cancel</button><button id="save-definition">Save &amp; generate</button></div></form></dialog>
-<dialog id="revise"><form id="revise-form"><p class="eyebrow">ITERATE, DON'T RESTART</p><h2>What would you like to change?</h2><p>Describe the specific change. Everything else about the app stays exactly as it is — the model is shown the real current source and asked to make only this edit.</p><textarea id="change-request" required minlength="5" maxlength="2000" placeholder="Make the calendar card collapsible."></textarea><div class="dialog-actions"><button type="button" data-close="revise" class="subtle">Cancel</button><button id="save-revise">Request change</button></div></form></dialog>
 <dialog id="connection"><p class="eyebrow">YOUR AUTHORING ASSISTANT</p><h2>Connect Claude through MCP.</h2><p>Start PAC Manager locally, then add this server to your client's MCP configuration. Replace both paths with absolute paths on your machine.</p><pre>{"mcpServers":{"pacmanager":{
   "command":"node",
   "args":["/absolute/pacmanager/demo/mcp-stdio.js"],

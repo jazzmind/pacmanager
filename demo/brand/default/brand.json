@@ -19,7 +19,8 @@
     "error": "#a83232",
     "sunken": "#e9eee7",
     "hover": "#e6eee7",
-    "badge": "#eaf1e7"
+    "badge": "#eaf1e7",
+    "navy": "#16211c"
   },
   "fonts": {
     "display": "Inter",
