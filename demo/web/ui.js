@@ -1,5 +1,5 @@
 import { initGraduation } from './graduation-ui.js';
-const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='';
+const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='',historyOpen=false,selectedRelease=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
@@ -83,7 +83,9 @@ async function refresh(){
 }
 function draw(){
   $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title+(['static','app'].includes(app.config.tier)?' · generated app':'');
+  const isLive=app.generation?.status==='generating'||app.build?.status==='building';
   $('status').textContent=app.generation?.status==='generating'?'Generating…':app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
+  $('status').classList.toggle('live',isLive);
   $('build').disabled=app.build?.status==='building'||app.generation?.status==='generating';$('publish').disabled=app.build?.status!=='ready'||app.build.revision!==app.revision;
   if(!app.config.kind)$('generate').hidden=true; // the owner-only toggle in refresh() already hides it from non-owners
   // Once real source exists, editing means requesting a targeted change (revise), not
@@ -106,12 +108,28 @@ function draw(){
   const ready=published?Boolean(app.release):app.build?.status==='ready';const url='/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
   const key=[app.id,published,app.build?.id,app.build?.status,app.release?.number,app.documents.length,app.comments.length,app.binding].join(':');
   $('preview').hidden=!ready;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
-  $('open-preview').href=url;$('open-preview').hidden=!ready;$('preview-label').textContent=published?'Published release · v'+(app.release?.number||'—'):'Draft application preview';$('draft').classList.toggle('selected',!published);$('published').classList.toggle('selected',published);
+  $('open-preview').href=url;$('open-preview').hidden=!ready;$('preview-label').textContent=published?'Published release · v'+(app.release?.number||'—'):'Draft application preview';
+  $('canvas-view').hidden=historyOpen;$('history-view').hidden=!historyOpen;
+  $('draft').classList.toggle('selected',!published&&!historyOpen);$('published').classList.toggle('selected',published&&!historyOpen);$('history').classList.toggle('selected',historyOpen);
+  if(historyOpen)renderHistory();
   docs();$('comments').innerHTML=app.comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><p>${esc(c.text)}</p><small>${esc(new Date(c.createdAt).toLocaleTimeString())}</small></div>`).join('')||'<p>No notes yet. Start the conversation.</p>';
   $('binding-state').textContent=app.binding?'Connected · '+app.claims.length+' synthetic claims':'Not connected';$('bind').disabled=app.binding;$('bind').textContent=app.binding?'Mock service bound ✓':'Bind mock claims';$('export').href='/api/apps/'+app.id+'/export';$('export').hidden=!app.release||me.kind!=='owner';
   $('release').textContent=app.release?`Internal release v${app.release.number} · Definition revision ${app.release.revision} · Documents and discussion remain shared. ${app.revision!==app.release.revision?'Unpublished changes in draft.':''}`:'Visible to this workspace only. Publish when your team is ready.';
-  $('release-history-cap').hidden=!(app.releases&&app.releases.length);
-  $('release-history').innerHTML=(app.releases||[]).slice().reverse().map(r=>{const current=app.release&&app.release.number===r.number;return `<div class="release-row"><span>v${r.number} · ${new Date(r.publishedAt).toLocaleString()}${current?' · current':''}</span><button data-rollback="${r.number}" class="subtle"${current?' disabled':''}>Roll back</button></div>`;}).join('');
+}
+// "View earlier versions" as a real affordance, not just a number/date list with a blind
+// rollback button: the right pane actually previews the selected release's own frozen content
+// (see server.js's preview?release=N), and rollback only appears once a non-current one is picked.
+function renderHistory(){
+  const releases=(app.releases||[]).slice().reverse();
+  if(!selectedRelease||!releases.some(r=>r.number===selectedRelease))selectedRelease=releases[0]?.number??null;
+  $('release-history-full').innerHTML=releases.map(r=>{
+    const current=app.release&&app.release.number===r.number;
+    return `<button class="release-row-btn${r.number===selectedRelease?' selected':''}" data-release="${r.number}"><strong>Release v${r.number}</strong><small>${new Date(r.publishedAt).toLocaleString()}</small>${current?'<span class="tag-current">current</span>':''}</button>`;
+  }).join('')||'<p class="hint" style="padding:16px">No releases published yet.</p>';
+  const current=app.release&&app.release.number===selectedRelease;
+  $('history-rollback').hidden=!selectedRelease||current||me.kind!=='owner';
+  $('history-preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');
+  $('history-preview').src=selectedRelease?'/api/apps/'+app.id+'/preview?release='+selectedRelease:'';
 }
 function docs(){const q=$('search').value.toLowerCase();$('documents').innerHTML=app.documents.filter(d=>(d.name+' '+d.text).toLowerCase().includes(q)).map(d=>`<div class="document"><strong>▤ ${esc(d.name)}</strong><p>${esc(d.text.slice(0,160)||'PDF attachment · no extracted text')}</p><small>${esc(d.author)} · ${Math.ceil(d.size/1024)} KB</small></div>`).join('')||'<p>No matching documents yet.</p>';}
 async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('new').hidden=me.kind!=='owner';$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';authoringBadge();await refresh();}
@@ -139,7 +157,7 @@ $('definition-form').onsubmit=action(async()=>{
   api('apps/'+selected+'/generate',{}).then(refresh).catch(error=>toast(error.message));
 });
 for(const [id,route,message] of [['build','build','Build started. Activity updates below.'],['generate','generate','Generating your application…'],['bind','binding','Mock claims service bound.'],['publish','publish','Published internally. Invite your team from the Team tab.']])$(id).onclick=action(async()=>{await api('apps/'+app.id+'/'+route,{});if(id==='publish')published=true;await refresh();toast(message);});
-$('draft').onclick=()=>{published=false;draw();};$('published').onclick=()=>{published=true;draw();};
+$('draft').onclick=()=>{published=false;historyOpen=false;draw();};$('published').onclick=()=>{published=true;historyOpen=false;draw();};$('history').onclick=()=>{historyOpen=true;draw();};
 $('delete').onclick=action(async()=>{
   if(!confirm('Archive "'+app.config.title+'"? This hides it from your list — it isn’t permanently deleted, and an admin can restore or purge it later.'))return;
   await apiDelete('apps/'+app.id);
@@ -160,12 +178,15 @@ $('regenerate').onclick=action(async()=>{
   toast('Regenerating from scratch…');
   api('apps/'+app.id+'/generate',{}).then(refresh).catch(error=>toast(error.message));
 });
-$('release-history').onclick=action(async e=>{
-  const b=e.target.closest('[data-rollback]');if(!b)return;
-  if(!confirm('Roll back to release v'+b.dataset.rollback+'? This publishes a NEW release with that old content — nothing is deleted.'))return;
-  await api('apps/'+app.id+'/rollback',{release:Number(b.dataset.rollback)});
-  published=true;await refresh();
-  toast('Rolled back to v'+b.dataset.rollback+' (as a new release).');
+$('release-history-full').onclick=e=>{
+  const b=e.target.closest('[data-release]');if(!b)return;
+  selectedRelease=Number(b.dataset.release);renderHistory();
+};
+$('history-rollback').onclick=action(async()=>{
+  if(!confirm('Roll back to release v'+selectedRelease+'? This publishes a NEW release with that old content — nothing is deleted.'))return;
+  await api('apps/'+app.id+'/rollback',{release:selectedRelease});
+  historyOpen=false;published=true;await refresh();
+  toast('Rolled back to v'+selectedRelease+' (as a new release).');
 });
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('selected',t===b));});
 $('search').oninput=docs;
