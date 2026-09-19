@@ -104,3 +104,15 @@ test('KIND-015 adding repo to a legacy record leaves its sourceDigest byte-ident
   // that never sets it must still hash exactly as it did before this field existed.
   assert.equal(compile(legacyTemplate).sourceDigest, '0b67d608352c765bac86539f3aefaad468fbf5bab758c08532f44ade5cccd860');
 });
+
+test('KIND-016 definition() re-validates its own normalized repo output unchanged — a pathless repo binding must round-trip', () => {
+  // Found live: validateRepo's own normalized shape always sets path explicitly to null, not
+  // undefined, but the validator treated "path is present but not a string" (true for null)
+  // as invalid — so re-running definition() on an already-normalized config (which every later
+  // write does: a revision, an update) failed every time a repo had no path. Every later write
+  // in the app's lifecycle passes its OWN previous output back through definition(), so this
+  // must be idempotent, not just correct on first validation.
+  const first = definition({ title: 'Repo Roundtrip', brief: 'test test test', template: 'claims', accent: 'teal', repo: { mode: 'dedicated', url: 'https://github.com/example/app' } });
+  const second = definition({ title: first.title, brief: first.brief, template: first.template, accent: first.accent, repo: first.repo });
+  assert.deepEqual(second.repo, first.repo);
+});

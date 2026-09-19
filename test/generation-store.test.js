@@ -99,7 +99,7 @@ test('GEN-105 a generation cannot start while a build is running, and a build ca
   await assert.rejects(() => store.startGeneration(owner, staticApp.id), /Wait for the current build to finish/);
 });
 
-test('GEN-106 regenerating after a publish makes the prior release stale — the existing publish guard blocks publishing without a fresh build', async t => {
+test('GEN-106 revising after a publish makes the prior release stale — the existing publish guard blocks publishing without a fresh build', async t => {
   const store = storeFixture(t, fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } }]));
   const app = store.create(owner, intentApp);
   await store.startGeneration(owner, app.id);
@@ -108,9 +108,11 @@ test('GEN-106 regenerating after a publish makes the prior release stale — the
   await store.lastBuild;
   store.publish(owner, app.id); // release recorded at revision 2
 
-  // Regenerate: same fake adapter (single scripted response) still returns something, revision bumps to 3.
+  // Revise: the app already has source, so this now requires a changeRequest (GEN-113 covers
+  // the revise mechanism itself in depth) -- same fake adapter (single scripted response)
+  // still returns something, revision bumps to 3.
   store.authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v2</h1>' } } }]);
-  await store.startGeneration(owner, app.id);
+  await store.startGeneration(owner, app.id, { changeRequest: 'change the heading to v2' });
   await store.lastGeneration;
   assert.equal(app.revision, 3);
   assert.throws(() => store.publish(owner, app.id), /Build the current draft before publishing/);
@@ -200,4 +202,102 @@ test('GEN-110 a server restart mid-generation marks it failed instead of leaving
   const restored = store2.state.apps.find(a => a.id === app.id);
   assert.equal(restored.generation.status, 'failed');
   assert.match(restored.generation.logs.at(-1).text, /restarted during generation/);
+});
+
+// Revise, not rewrite (see the platform roadmap: iterating a real artifact was previously
+// impossible -- every edit re-rolled from scratch because the only caller reset the app to
+// tier:'intent' before ever calling startGeneration, discarding config.source first).
+
+test('GEN-117 revising an already-generated artifact requires a changeRequest', async t => {
+  const authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } }]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration; // now has real source, tier 'static'
+  await assert.rejects(() => store.startGeneration(owner, app.id), /Describe the change you want \(changeRequest\)/);
+});
+
+test('GEN-118 a revise call sends the exact current source and the change request to the adapter, and preserves the repo binding across it', async t => {
+  const authoring = fakeAuthoring([
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } },
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v2</h1>' } } },
+  ]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, { ...intentApp, repo: { mode: 'dedicated', url: 'https://github.com/example/tapper' } });
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  assert.equal(authoring.calls[0].payload.currentSource, null); // nothing to revise on the first, from-scratch call
+
+  await store.startGeneration(owner, app.id, { changeRequest: 'make the heading say v2' });
+  await store.lastGeneration;
+
+  assert.deepEqual(authoring.calls[1].payload.currentSource, { 'index.html': '<h1>v1</h1>' });
+  assert.equal(authoring.calls[1].payload.changeRequest, 'make the heading say v2');
+  assert.deepEqual(app.config.source, { 'index.html': '<h1>v2</h1>' });
+  assert.deepEqual(app.config.repo, { mode: 'dedicated', url: 'https://github.com/example/tapper', branch: 'main', path: null });
+});
+
+test('GEN-119 resetting to tier "intent" is still the explicit path to regenerate from scratch, with no changeRequest required', async t => {
+  const authoring = fakeAuthoring([
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } },
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>fresh</h1>' } } },
+  ]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  app.config = { title: app.config.title, brief: app.config.brief, kind: app.config.kind, accent: app.config.accent, tier: 'intent' };
+  await store.startGeneration(owner, app.id); // no changeRequest -- allowed, because tier is 'intent' again
+  await store.lastGeneration;
+  assert.equal(authoring.calls[1].payload.currentSource, null);
+  assert.deepEqual(app.config.source, { 'index.html': '<h1>fresh</h1>' });
+});
+
+// Release retention + rollback (previously: publish() only ever overwrote app.release, so a
+// bad iteration was unrecoverable).
+
+test('GEN-120 publish retains prior releases (bounded), and rollback publishes a NEW release with the old content rather than rewriting history', async t => {
+  const authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } }]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  store.startBuild(owner, app.id);
+  await store.lastBuild;
+  store.publish(owner, app.id); // release 1, "v1"
+
+  app.config.source = { 'index.html': '<h1>v2</h1>' }; // simulate a revision landing without going through the adapter again
+  store.startBuild(owner, app.id);
+  await store.lastBuild;
+  store.publish(owner, app.id); // release 2, "v2"
+
+  assert.equal(app.release.number, 2);
+  assert.equal(app.releases.length, 2);
+
+  const rolledBack = store.rollback(owner, app.id, 1);
+  assert.equal(rolledBack.number, 3); // a NEW release, not a rewrite of release 1
+  assert.deepEqual(app.config.source, { 'index.html': '<h1>v1</h1>' }); // but the OLD content
+  assert.equal(app.releases.length, 3);
+  assert.match(app.audit.at(-1).event, /rolled back to release 1/);
+});
+
+test('GEN-121 rollback to a release outside the retention window fails clearly', async t => {
+  const store = storeFixture(t, fakeAuthoring([]));
+  const app = store.create(owner, intentApp);
+  assert.throws(() => store.rollback(owner, app.id, 99), /not retained for rollback/);
+});
+
+test('GEN-122 view() exposes retained releases as a light number+timestamp summary, not the full payload', async t => {
+  const authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } }]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, intentApp);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  store.startBuild(owner, app.id);
+  await store.lastBuild;
+  store.publish(owner, app.id);
+  const viewed = store.view(owner, app.id);
+  assert.deepEqual(viewed.releases, [{ number: 1, publishedAt: app.releases[0].publishedAt }]);
+  assert.equal(viewed.releases[0].result, undefined);
+  assert.equal(viewed.releases[0].config, undefined);
 });

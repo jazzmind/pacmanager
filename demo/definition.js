@@ -214,9 +214,15 @@ function validateRepo(value) {
   if (typeof value.url !== 'string' || !value.url.trim()) throw new Error('repo.url is required');
   if (value.branch !== undefined && (typeof value.branch !== 'string' || !value.branch.trim())) throw new Error('repo.branch must be a non-empty string');
   // path scopes modes 'shared'/'personal' to a subdirectory of a repo holding many artifacts;
-  // 'dedicated' means the artifact owns the repo root, so path is meaningless there.
-  if (value.path !== undefined && (typeof value.path !== 'string' || value.path.includes('..') || value.path.startsWith('/'))) throw new Error('repo.path must be a safe relative path');
-  if (value.mode === 'dedicated' && value.path !== undefined) throw new Error('repo.path is not meaningful for mode "dedicated" (the artifact owns the repo root)');
+  // 'dedicated' means the artifact owns the repo root, so path is meaningless there. `null` is
+  // treated the same as `undefined` ("no path") -- this validator must also accept its OWN
+  // normalized output unchanged, since every later write (a revision, an update) re-runs
+  // definition() on a config that already carries a previously-normalized repo object with
+  // path explicitly set to null, not omitted. Found live: without this, revising an artifact
+  // with a pathless repo binding failed every time.
+  const hasPath = value.path !== undefined && value.path !== null;
+  if (hasPath && (typeof value.path !== 'string' || value.path.includes('..') || value.path.startsWith('/'))) throw new Error('repo.path must be a safe relative path');
+  if (value.mode === 'dedicated' && hasPath) throw new Error('repo.path is not meaningful for mode "dedicated" (the artifact owns the repo root)');
   return { mode: value.mode, url: value.url.trim(), branch: (value.branch || 'main').trim(), path: value.path?.trim() || null };
 }
 

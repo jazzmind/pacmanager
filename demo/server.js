@@ -28,7 +28,8 @@ const toolsList=[
   ['create_application','Create an application. Either omit tier (or pass "template") for the bounded claims/knowledge layout, or pass an artifact kind — interactive, knowledge, application, or auto to let the model choose — with tier "intent" and no source; call generate_application afterwards to actually author it. Pass tier "static" with a source file map yourself only if you are hand-authoring code rather than generating it.',definitionProps,['title','brief','accent']],
   ['inspect_application','Read draft, build logs, generation status, documents and comments',{id:{type:'string'}},['id']],
   ['update_application','Update the definition; revision prevents overwriting another edit. Include tier and source to change or keep generated code — omitting them resets the app to the bounded template tier.',{id:{type:'string'},revision:{type:'integer'},...definitionProps},['id','revision','title','brief','accent']],
-  ['generate_application','Generate real source for a "kind"-based application (tier "intent" or a previous generation) using the configured authoring adapter — an actual model call, not a template. Fails clearly (501) if no adapter is configured; validates and repairs its own output against the same safety gate a hand-authored source map must pass, up to a few attempts, before failing. Poll inspect_application for progress and the result.',{id:{type:'string'}},['id']],
+  ['generate_application','Generate or revise real source for a "kind"-based application using the configured authoring adapter — an actual model call, not a template. If the artifact is tier "intent" (nothing generated yet), this generates from scratch and changeRequest is ignored. If it already has source, changeRequest is REQUIRED and describes the specific change to make — the model is given the current source and asked to revise it, not rewrite it from the brief. To start over from nothing instead, reset tier to "intent" first (a separate, explicit, destructive step). Fails clearly (501) if no adapter is configured; validates and repairs its own output against the same safety gate a hand-authored source map must pass, up to a few attempts, before failing. Poll inspect_application for progress and the result.',{id:{type:'string'},changeRequest:{type:'string'}},['id']],
+  ['rollback_application','Roll an application back to a previously published release. Publishes a NEW release with the old release\'s exact content — release numbers stay monotonic, nothing is rewritten. Only releases still within the retention window (see inspect_application\'s releases list) can be targeted.',{id:{type:'string'},release:{type:'integer'}},['id','release']],
   ['build_application','Start a real build, then inspect its status',{id:{type:'string'}},['id']],
   ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}},['id']],
   ['publish_application','Publish the current successfully built draft internally',{id:{type:'string'}},['id']],
@@ -145,7 +146,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'create_application':output=store.create(principal,a);break;
               case 'inspect_application':output=store.view(principal,a.id);break;
               case 'update_application':{const {id,revision,...config}=a;output=store.update(principal,id,config,revision);break;}
-              case 'generate_application':output=await store.startGeneration(principal,a.id);break;
+              case 'generate_application':output=await store.startGeneration(principal,a.id,{changeRequest:a.changeRequest});break;
+              case 'rollback_application':output=store.rollback(principal,a.id,a.release);break;
               case 'build_application':output=store.startBuild(principal,a.id);break;
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
               case 'publish_application':store.publish(principal,a.id);output={url:origin+'/?app='+a.id+'&published=1'};break;
@@ -209,7 +211,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -237,7 +239,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       switch(action){
         case 'definition':store.update(principal,id,body.config,body.revision);break;
         case 'build':return json(202,store.startBuild(principal,id));
-        case 'generate':return json(202,await store.startGeneration(principal,id));
+        case 'generate':return json(202,await store.startGeneration(principal,id,{changeRequest:body.changeRequest}));
+        case 'rollback':return json(200,store.rollback(principal,id,body.release));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;
         case 'binding':store.bind(principal,id);break;

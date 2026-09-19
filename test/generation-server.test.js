@@ -102,3 +102,57 @@ test('GENSRV-005 generate_application fails with a clear, specific error over MC
   assert.equal(gen.data.result.isError,true);
   assert.match(gen.data.result.content[0].text,/No authoring adapter configured. Set PAC_AUTHORING_ADAPTER/);
 });
+
+test('GENSRV-007 revising a generated app over the REST route requires changeRequest, sends the existing source, and rollback restores the prior release', async t => {
+  const authoring = fakeAuthoring([
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } },
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v2</h1>' } } },
+  ]);
+  const { runtime, call } = await fixture(t, authoring);
+  const created = await call('/api/apps', { title: 'Tapper Clone', brief: 'An arcade game, insurance themed.', kind: 'interactive', accent: 'teal', tier: 'intent' });
+  await call('/api/apps/' + created.data.id + '/generate', {});
+  await runtime.store.lastGeneration;
+  await call('/api/apps/' + created.data.id + '/build', {});
+  await runtime.store.lastBuild;
+  await call('/api/apps/' + created.data.id + '/publish', {});
+
+  // No changeRequest -> 400, not a silent from-scratch rewrite.
+  const refused = await call('/api/apps/' + created.data.id + '/generate', {});
+  assert.equal(refused.status, 400);
+  assert.match(refused.data.error, /Describe the change you want/);
+
+  const revised = await call('/api/apps/' + created.data.id + '/generate', { changeRequest: 'change v1 to v2' });
+  assert.equal(revised.status, 202);
+  await runtime.store.lastGeneration;
+  assert.deepEqual(authoring.calls[1].payload.currentSource, { 'index.html': '<h1>v1</h1>' });
+  assert.equal(authoring.calls[1].payload.changeRequest, 'change v1 to v2');
+
+  const afterRevise = await call('/api/apps/' + created.data.id);
+  assert.deepEqual(afterRevise.data.config.source, { 'index.html': '<h1>v2</h1>' });
+
+  await call('/api/apps/' + created.data.id + '/build', {});
+  await runtime.store.lastBuild;
+  await call('/api/apps/' + created.data.id + '/publish', {}); // release 2, "v2"
+
+  const rolledBack = await call('/api/apps/' + created.data.id + '/rollback', { release: 1 });
+  assert.equal(rolledBack.status, 200);
+  assert.equal(rolledBack.data.number, 3); // a new release, not a rewrite
+  const final = await call('/api/apps/' + created.data.id);
+  assert.deepEqual(final.data.config.source, { 'index.html': '<h1>v1</h1>' }); // old content, restored
+});
+
+test('GENSRV-008 rollback_application MCP tool round-trips through the real MCP surface', async t => {
+  const authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } }]);
+  const { runtime, call } = await fixture(t, authoring);
+  const created = await call('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_application', arguments: { title: 'Tapper Clone', brief: 'An arcade game, insurance themed.', kind: 'interactive', accent: 'teal', tier: 'intent' } } });
+  const app = JSON.parse(created.data.result.content[0].text);
+  await call('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'generate_application', arguments: { id: app.id } } });
+  await runtime.store.lastGeneration;
+  await call('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'build_application', arguments: { id: app.id } } });
+  await runtime.store.lastBuild;
+  await call('/mcp', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'publish_application', arguments: { id: app.id } } });
+
+  const rollback = await call('/mcp', { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'rollback_application', arguments: { id: app.id, release: 99 } } });
+  assert.equal(rollback.data.result.isError, true);
+  assert.match(rollback.data.result.content[0].text, /not retained for rollback/);
+});
