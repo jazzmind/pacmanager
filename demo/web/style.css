@@ -140,3 +140,29 @@ header h1{font-size:24px}
 .admin-row{display:grid;grid-template-columns:1fr 120px 140px 1fr 80px auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--pac-line);font-size:12px}
 .admin-row:last-child{border-bottom:0}
 
+.home-nav{display:block;width:100%;text-align:left;margin-bottom:14px;background:transparent;border:0;padding:13px 10px;font-weight:600}
+.home-nav.active{background:var(--pac-surface);box-shadow:0 2px 4px color-mix(in srgb,var(--pac-ink) 6%,transparent)}
+#home{padding-bottom:20px}
+.hero{padding:20px 0 30px;max-width:640px}
+.shelf{margin-bottom:34px}
+.shelf h3{font-size:15px;font-weight:650;margin-bottom:14px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.card{border:1px solid var(--pac-line);border-radius:10px;background:var(--pac-surface);overflow:hidden;cursor:pointer;text-align:left;padding:0}
+.card:hover{box-shadow:0 4px 14px color-mix(in srgb,var(--pac-ink) 10%,transparent)}
+.card-art{height:96px;position:relative;overflow:hidden}
+.card-art img{width:100%;height:100%;object-fit:cover;display:block}
+.card-art .card-art-stack{position:absolute;inset:8px 8px auto auto;width:36px;height:36px;border-radius:6px;background:color-mix(in srgb,var(--pac-surface) 70%,transparent);border:1px solid var(--pac-line)}
+.card-body{padding:14px}
+.card-body strong{display:block;font-size:13px;margin-bottom:6px}
+.card-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.card-badge{font-size:9px;text-transform:uppercase;letter-spacing:.5px;padding:3px 7px;border-radius:20px;border:1px solid var(--pac-line);color:var(--pac-ink-muted)}
+.card-badge.status-published{color:var(--pac-ok);border-color:color-mix(in srgb,var(--pac-ok) 40%,var(--pac-line))}
+.card-badge.status-building,.card-badge.status-generating{color:var(--pac-warn);border-color:color-mix(in srgb,var(--pac-warn) 40%,var(--pac-line))}
+.card-badge.status-archived{color:var(--pac-ink-muted);border-color:var(--pac-line)}
+.card small{color:var(--pac-ink-muted)}
+.kind-guidance-example{display:block;margin-top:6px;font-style:italic}
+#revise textarea{min-height:100px}
+.release-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--pac-line);font-size:12px}
+.release-row:last-child{border-bottom:0}
+.release-row button{font-size:11px;padding:6px 10px}
+

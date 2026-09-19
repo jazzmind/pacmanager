@@ -1,6 +1,53 @@
 import { initGraduation } from './graduation-ui.js';
 const $=id=>document.getElementById(id);let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
+// hotlinking allowed, and deploykit's webUI already learned that the hard way). Purely cosmetic:
+// a two-stop gradient plus one circle, both derived from the app id so the same app always
+// renders the same art without storing anything.
+function placeholderArt(seed){
+  let h=0;for(const c of seed)h=(h*31+c.charCodeAt(0))>>>0;
+  const hue1=h%360,hue2=(hue1+40)%360;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue1},55%,55%)"/><stop offset="1" stop-color="hsl(${hue2},55%,38%)"/></linearGradient></defs><rect width="200" height="120" fill="url(#g)"/><circle cx="${40+h%110}" cy="${25+h%55}" r="30" fill="rgba(255,255,255,0.16)"/></svg>`;
+  return 'data:image/svg+xml,'+encodeURIComponent(svg);
+}
+function statusOf(a){
+  if(a.archivedAt)return 'archived';
+  if(a.published)return 'published';
+  if(a.generation?.status==='generating')return 'generating';
+  if(a.build?.status==='building')return 'building';
+  return a.build?.status||'draft';
+}
+function statusLabel(a){const s=statusOf(a);return s==='published'?'Published · v'+a.release.number:s.charAt(0).toUpperCase()+s.slice(1);}
+function cardHtml(a){
+  const kind=a.config.kind||a.config.template||'template';
+  return `<button class="card" data-app="${a.id}"><div class="card-art"><img src="${placeholderArt(a.id)}" alt=""></div><div class="card-body"><strong>${esc(a.config.title)}</strong><div class="card-meta"><span class="card-badge status-${statusOf(a)}">${esc(statusLabel(a))}</span><span class="card-badge">${esc(kind)}</span></div><small>${new Date(a.createdAt).toLocaleDateString()}${a.lastDeployment?' · deployed':''}</small></div></button>`;
+}
+function renderHome(){
+  const email=me?.email,isAdmin=me.kind==='owner';
+  const mine=email?apps.filter(a=>a.ownerEmail===email):(isAdmin?apps:[]);
+  const shared=email?apps.filter(a=>(a.sharedWith||[]).includes(email)):[];
+  $('cards-mine').innerHTML=mine.map(cardHtml).join('')||'<p>Nothing yet — create your first application.</p>';
+  $('shelf-shared').hidden=!email;
+  $('cards-shared').innerHTML=shared.map(cardHtml).join('')||'<p>Nothing shared with you yet.</p>';
+  $('shelf-all').hidden=!isAdmin;
+  if(isAdmin)$('cards-all').innerHTML=apps.map(cardHtml).join('')||'<p>No applications yet.</p>';
+}
+function showView(v){
+  $('empty').hidden=v!=='empty';$('home').hidden=v!=='home';$('detail').hidden=v!=='detail';
+  $('home-nav').classList.toggle('active',v==='home');
+}
+
+// What each artifact kind is, what it genuinely cannot do, and one worked example -- shown in
+// the create dialog so "what can I build?" has a real answer instead of four bare option labels.
+const KIND_GUIDANCE={
+  interactive:{what:'A self-contained page or small game — everything runs client-side in a sandboxed preview, no server involved.',cant:"No fetch/XHR/WebSocket, no network access of any kind, nothing server-side.",example:'Example: a personal dashboard that tracks priorities, calendar and AI usage budgets — static HTML/CSS/JS with checkboxes that persist to localStorage once deployed (ephemeral in preview, since the preview iframe has no origin to persist to).'},
+  knowledge:{what:'A knowledge workspace / "digital expert" layout that presents agent-run briefings recorded via record_agent_run.',cant:'Same client-side-only restrictions as interactive — briefings are injected by the host, never fetched live.',example:'Example: a weekly market-intel page your agent updates on a schedule.'},
+  application:{what:'A real client+API project — a Dockerfile plus whatever server code it needs, actually built and run.',cant:'Not subject to the static-tier restrictions, but the model has to hand you something genuinely runnable.',example:"Example: something like chatprc. Be honest with yourself here — this MCP bridge has never been exercised against a live Claude session end to end, and chatprc itself has no MCP server of its own (its \"MCP skill\" is a Claude Code skill for deploykit, not an MCP server). Treat this path as unproven, not turnkey."},
+  auto:{what:'Let the model read your brief and choose interactive, knowledge or application itself.',cant:'You give up control of the exact kind; it reports back what it picked and why.',example:'Good default when you\'re not sure which of the above fits.'},
+};
+function updateKindGuidance(){const k=$('kind').value,g=KIND_GUIDANCE[k]||KIND_GUIDANCE.auto;$('kind-guidance').innerHTML=`${esc(g.what)} ${esc(g.cant)}<span class="kind-guidance-example">${esc(g.example)}</span>`;}
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
 async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 async function apiDelete(path){const r=await fetch('/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
@@ -16,6 +63,7 @@ function editor(isEdit){
   if(legacy)$('template').value=app.config.template;else $('kind').value=isEdit?(app.config.kind||'interactive'):'interactive';
   $('editor-authoring-warning').hidden=legacy||Boolean(me?.authoring?.available);
   $('editor-title').textContent=isEdit?'Update your application':'What would you like to build?';
+  $('kind-guidance').hidden=legacy;updateKindGuidance();
   $('editor').showModal();
 }
 function authoringBadge(){
@@ -25,18 +73,25 @@ function authoringBadge(){
 const autoBuiltRevision={};
 async function refresh(){
   me=await api('me');authoringBadge();
+  document.querySelectorAll('.owner').forEach(el=>el.hidden=me.kind!=='owner');$('admin-link').hidden=me.kind!=='owner';
   apps=await api('apps');$('apps').innerHTML=apps.map(a=>`<button data-app="${a.id}" class="${a.id===selected?'active':''}">${esc(a.config.title)}<small>${a.published?'Published':a.generation?.status==='generating'?'Generating':a.build?.status||'Draft'} · ${a.documents} documents</small></button>`).join('');
-  if(!selected&&apps.length)selected=apps[0].id;
+  if(!apps.length){selected=null;app=null;showView('empty');return;}
   // selected can point at an app that's no longer in the list (archived, e.g. by the delete
-  // button below) -- fall back to the empty state instead of rendering a stale detail view.
-  if(selected&&apps.some(a=>a.id===selected)){app=await api('apps/'+selected);draw();}
-  else{selected=null;app=null;$('empty').hidden=false;$('detail').hidden=true;}
+  // button below) -- fall back to the home view, not a stale detail view.
+  if(selected&&apps.some(a=>a.id===selected)){app=await api('apps/'+selected);showView('detail');draw();}
+  else{selected=null;app=null;renderHome();showView('home');}
 }
 function draw(){
   $('empty').hidden=true;$('detail').hidden=false;$('title').textContent=app.config.title+(['static','app'].includes(app.config.tier)?' · generated app':'');
   $('status').textContent=app.generation?.status==='generating'?'Generating…':app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
-  document.querySelectorAll('.owner').forEach(el=>el.hidden=me.kind!=='owner');$('build').disabled=app.build?.status==='building'||app.generation?.status==='generating';$('publish').disabled=app.build?.status!=='ready'||app.build.revision!==app.revision;
-  if(!app.config.kind)$('generate').hidden=true; // .owner above already hides it from non-owners
+  $('build').disabled=app.build?.status==='building'||app.generation?.status==='generating';$('publish').disabled=app.build?.status!=='ready'||app.build.revision!==app.revision;
+  if(!app.config.kind)$('generate').hidden=true; // the owner-only toggle in refresh() already hides it from non-owners
+  // Once real source exists, editing means requesting a targeted change (revise), not
+  // reopening the full brief editor -- see demo/store.js's startGeneration changeRequest
+  // requirement. "Regenerate from scratch" is the separate, explicit, destructive escape hatch.
+  const hasSource=['static','app'].includes(app.config.tier);
+  $('edit').textContent=hasSource?'Request a change':'Edit brief';
+  $('regenerate').hidden=me.kind!=='owner'||!hasSource;
   $('generate').disabled=app.generation?.status==='generating';$('generate').textContent=app.generation?.status==='failed'?'Retry generation':'Generate';
   $('mode').textContent=app.build?.mode||me.mode;
   const logs=[...(app.generation?.logs||[]),...(app.build?.logs||[])];
@@ -55,14 +110,21 @@ function draw(){
   docs();$('comments').innerHTML=app.comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><p>${esc(c.text)}</p><small>${esc(new Date(c.createdAt).toLocaleTimeString())}</small></div>`).join('')||'<p>No notes yet. Start the conversation.</p>';
   $('binding-state').textContent=app.binding?'Connected · '+app.claims.length+' synthetic claims':'Not connected';$('bind').disabled=app.binding;$('bind').textContent=app.binding?'Mock service bound ✓':'Bind mock claims';$('export').href='/api/apps/'+app.id+'/export';$('export').hidden=!app.release||me.kind!=='owner';
   $('release').textContent=app.release?`Internal release v${app.release.number} · Definition revision ${app.release.revision} · Documents and discussion remain shared. ${app.revision!==app.release.revision?'Unpublished changes in draft.':''}`:'Visible to this workspace only. Publish when your team is ready.';
+  $('release-history-cap').hidden=!(app.releases&&app.releases.length);
+  $('release-history').innerHTML=(app.releases||[]).slice().reverse().map(r=>{const current=app.release&&app.release.number===r.number;return `<div class="release-row"><span>v${r.number} · ${new Date(r.publishedAt).toLocaleString()}${current?' · current':''}</span><button data-rollback="${r.number}" class="subtle"${current?' disabled':''}>Roll back</button></div>`;}).join('');
 }
 function docs(){const q=$('search').value.toLowerCase();$('documents').innerHTML=app.documents.filter(d=>(d.name+' '+d.text).toLowerCase().includes(q)).map(d=>`<div class="document"><strong>▤ ${esc(d.name)}</strong><p>${esc(d.text.slice(0,160)||'PDF attachment · no extracted text')}</p><small>${esc(d.author)} · ${Math.ceil(d.size/1024)} KB</small></div>`).join('')||'<p>No matching documents yet.</p>';}
 async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('new').hidden=me.kind!=='owner';$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';authoringBadge();await refresh();}
 $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').value});$('token').value='';await enter();});
 $('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
-$('new').onclick=$('start').onclick=()=>editor(false);$('edit').onclick=()=>editor(true);$('connect').onclick=()=>$('connection').showModal();
+$('new').onclick=$('start').onclick=()=>editor(false);
+$('edit').onclick=()=>{if(['static','app'].includes(app.config.tier))$('revise').showModal();else editor(true);};
+$('connect').onclick=()=>$('connection').showModal();
+$('kind').onchange=updateKindGuidance;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-$('apps').onclick=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
+const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
+$('apps').onclick=openApp;$('home').onclick=openApp;
+$('home-nav').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
 $('definition-form').onsubmit=action(async()=>{
   const legacy=editing&&!app.config.kind;
   const base={title:$('app-title').value,brief:$('brief').value,accent:$('accent').value};
@@ -83,6 +145,27 @@ $('delete').onclick=action(async()=>{
   await apiDelete('apps/'+app.id);
   await refresh();
   toast('Archived.');
+});
+$('revise-form').onsubmit=action(async()=>{
+  const changeRequest=$('change-request').value;
+  await api('apps/'+app.id+'/generate',{changeRequest});
+  $('revise').close();$('change-request').value='';
+  await refresh();
+  toast('Requesting change…');
+});
+$('regenerate').onclick=action(async()=>{
+  if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return;
+  await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
+  await refresh();
+  toast('Regenerating from scratch…');
+  api('apps/'+app.id+'/generate',{}).then(refresh).catch(error=>toast(error.message));
+});
+$('release-history').onclick=action(async e=>{
+  const b=e.target.closest('[data-rollback]');if(!b)return;
+  if(!confirm('Roll back to release v'+b.dataset.rollback+'? This publishes a NEW release with that old content — nothing is deleted.'))return;
+  await api('apps/'+app.id+'/rollback',{release:Number(b.dataset.rollback)});
+  published=true;await refresh();
+  toast('Rolled back to v'+b.dataset.rollback+' (as a new release).');
 });
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('selected',t===b));});
 $('search').oninput=docs;
