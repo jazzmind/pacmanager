@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, definition, sourceIssues, effectiveKind, KINDS } from '../demo/definition.js';
+import { compile, definition, sourceIssues, effectiveKind, KINDS, REPO_MODES } from '../demo/definition.js';
 
 // Artifact-kind migration (dual-accept, absent-means-classic) and the `tier:'intent'` state
 // that makes "no source yet" a real, compile()-refusing definition instead of a silent
@@ -67,4 +67,40 @@ test('KIND-010 sourceIssues never throws — always returns an array, even for a
   assert.deepEqual(sourceIssues(null), sourceIssues(null)); // doesn't throw
   assert.ok(Array.isArray(sourceIssues({})));
   assert.ok(sourceIssues({}).length > 0);
+});
+
+// Repo binding (the platform roadmap's three GitHub modes) — orthogonal to tier, and
+// deliberately excluded from sourceDigest since it records where source lives, not what
+// compiled, so it must never invalidate a digest whose whole point is proving compiled
+// output is byte-identical to its definition.
+
+test('KIND-011 REPO_MODES exposes the three binding modes', () => {
+  assert.deepEqual(REPO_MODES, ['shared', 'personal', 'dedicated']);
+});
+
+test('KIND-012 repo is optional and validated when present', () => {
+  const withoutRepo = definition({ title: 'No Repo', brief: 'test test test', template: 'claims', accent: 'teal' });
+  assert.equal(withoutRepo.repo, undefined);
+  const withRepo = definition({ title: 'Has Repo', brief: 'test test test', template: 'claims', accent: 'teal', repo: { mode: 'dedicated', url: 'https://github.com/example/app' } });
+  assert.deepEqual(withRepo.repo, { mode: 'dedicated', url: 'https://github.com/example/app', branch: 'main', path: null });
+});
+
+test('KIND-013 repo.mode must be one of the three; repo.url is required', () => {
+  const base = { title: 'Bad Repo', brief: 'test test test', template: 'claims', accent: 'teal' };
+  assert.throws(() => definition({ ...base, repo: { mode: 'nonsense', url: 'https://github.com/example/app' } }), /repo\.mode must be one of/);
+  assert.throws(() => definition({ ...base, repo: { mode: 'shared' } }), /repo\.url is required/);
+});
+
+test('KIND-014 repo.path scopes shared/personal to a subdirectory but is rejected for dedicated', () => {
+  const base = { title: 'Shared Repo App', brief: 'test test test', template: 'claims', accent: 'teal' };
+  const shared = definition({ ...base, repo: { mode: 'shared', url: 'https://github.com/example/builders', path: 'my-app' } });
+  assert.equal(shared.repo.path, 'my-app');
+  assert.throws(() => definition({ ...base, repo: { mode: 'dedicated', url: 'https://github.com/example/app', path: 'nope' } }), /repo\.path is not meaningful for mode "dedicated"/);
+  assert.throws(() => definition({ ...base, repo: { mode: 'shared', url: 'x', path: '../escape' } }), /repo\.path must be a safe relative path/);
+});
+
+test('KIND-015 adding repo to a legacy record leaves its sourceDigest byte-identical when repo is absent', () => {
+  // Same pinned digest as KIND-002 — repo is a brand-new field, appended last, so a record
+  // that never sets it must still hash exactly as it did before this field existed.
+  assert.equal(compile(legacyTemplate).sourceDigest, '0b67d608352c765bac86539f3aefaad468fbf5bab758c08532f44ade5cccd860');
 });

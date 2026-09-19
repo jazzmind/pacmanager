@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Store,DemoError } from './store.js';
 import { createBuilder } from './builders.js';
-import { render,injectBriefings,escape,KINDS } from './definition.js';
+import { render,injectBriefings,escape,KINDS,REPO_MODES } from './definition.js';
 import { graduationBundle } from './archive.js';
 import { assuranceSchema,assuranceRecord,completeness,saveAssurance,reportHtml,reportMarkdown,authoringGuide } from './assurance.js';
 import { createGithubPublisher } from './github-publisher.js';
@@ -21,7 +21,8 @@ const brand=loadBrand();
 // `kind` picks a real artifact type -- interactive/knowledge/application, or "auto" to let the
 // model decide -- and pairs with tier "intent" (no source yet; generate_application produces
 // it). `template` is the legacy claims/knowledge layout, unrelated to generation.
-const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},kind:{enum:KINDS},accent:{enum:Object.keys(brand.accentPalette())},tier:{enum:['template','static','app','intent']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'},sourcePath:{type:'string',description:'Only for tier "app": path to a real, existing directory on disk containing a Dockerfile. Not embedded source — pacmanager attests its digest, it does not copy it.'}};
+const definitionProps={title:{type:'string'},brief:{type:'string'},template:{enum:['claims','knowledge']},kind:{enum:KINDS},accent:{enum:Object.keys(brand.accentPalette())},tier:{enum:['template','static','app','intent']},source:{type:'object',additionalProperties:{type:'string'},description:'Only for tier "static": file path -> text content. Must include index.html. Allowed extensions: .html .css .js .json .svg. This is how real generated code (e.g. a game) is authored — tier "template" (the default) only ever produces the bounded claims/knowledge layout.'},sourcePath:{type:'string',description:'Only for tier "app": path to a real, existing directory on disk containing a Dockerfile. Not embedded source — pacmanager attests its digest, it does not copy it.'},
+  repo:{type:'object',additionalProperties:false,properties:{mode:{enum:REPO_MODES},url:{type:'string'},branch:{type:'string'},path:{type:'string'}},required:['mode','url'],description:'Optional: which GitHub repo this artifact\'s source lives in. mode "shared" = a common repo for builders without their own GitHub account (path scopes it to a subdirectory); "personal" = one repo for everything you own (path scopes it too); "dedicated" = this artifact owns the repo root. Metadata only in this pass — pacmanager does not yet read from or write to the repo on your behalf.'}};
 const toolsList=[
   ['list_applications','List your applications',{},[]],
   ['create_application','Create an application. Either omit tier (or pass "template") for the bounded claims/knowledge layout, or pass an artifact kind — interactive, knowledge, application, or auto to let the model choose — with tier "intent" and no source; call generate_application afterwards to actually author it. Pass tier "static" with a source file map yourself only if you are hand-authoring code rather than generating it.',definitionProps,['title','brief','accent']],

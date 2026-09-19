@@ -199,6 +199,27 @@ function compileApp(config) {
 export const KINDS = ['interactive', 'knowledge', 'application', 'auto', 'classic'];
 export const effectiveKind = config => config.kind ?? 'classic';
 
+// Repo binding: which of three GitHub modes an artifact's source lives in (see the platform
+// roadmap). Orthogonal to tier -- a static-tier artifact and an app-tier artifact can each be
+// bound to a repo the same way. Deliberately excluded from every tier's sourceDigest: it
+// records WHERE the source lives, not what was compiled, so it must not change a digest that
+// exists specifically to prove compiled output is byte-identical to its definition.
+export const REPO_MODES = ['shared', 'personal', 'dedicated'];
+function validateRepo(value) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('repo must be an object');
+  const allowed = ['mode', 'url', 'branch', 'path'];
+  for (const k of Object.keys(value)) if (!allowed.includes(k)) throw new Error(`Unsupported repo field: ${k}`);
+  if (!REPO_MODES.includes(value.mode)) throw new Error(`repo.mode must be one of: ${REPO_MODES.join(', ')}`);
+  if (typeof value.url !== 'string' || !value.url.trim()) throw new Error('repo.url is required');
+  if (value.branch !== undefined && (typeof value.branch !== 'string' || !value.branch.trim())) throw new Error('repo.branch must be a non-empty string');
+  // path scopes modes 'shared'/'personal' to a subdirectory of a repo holding many artifacts;
+  // 'dedicated' means the artifact owns the repo root, so path is meaningless there.
+  if (value.path !== undefined && (typeof value.path !== 'string' || value.path.includes('..') || value.path.startsWith('/'))) throw new Error('repo.path must be a safe relative path');
+  if (value.mode === 'dedicated' && value.path !== undefined) throw new Error('repo.path is not meaningful for mode "dedicated" (the artifact owns the repo root)');
+  return { mode: value.mode, url: value.url.trim(), branch: (value.branch || 'main').trim(), path: value.path?.trim() || null };
+}
+
 export function definition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Application definition required');
   const tier = value.tier || 'template';
@@ -210,7 +231,7 @@ export function definition(value) {
   // standing in for it. Only meaningful for a kind-based record: a legacy template-only record
   // has nothing to generate, so it must go straight to a real tier.
   if (tier === 'intent' && !hasKind) throw new Error('tier "intent" requires kind');
-  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier',
+  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier', 'repo',
     ...(tier === 'static' ? ['source'] : []),
     ...(tier === 'app' ? APP_TIER_FIELDS : [])];
   for (const k of Object.keys(value)) if (!allowed.includes(k)) throw new Error(`Unsupported definition field: ${k}`);
@@ -232,6 +253,11 @@ export function definition(value) {
   if (hasKind) result.kind = value.kind;
   if (tier === 'static') result.source = validateSource(value.source);
   if (tier === 'app') Object.assign(result, validateAppFields(value));
+  // Appended last, after everything else -- same field-ordering discipline as `kind` above:
+  // JSON.stringify drops an undefined `repo`, so a record predating this field keeps its
+  // exact key order and digest.
+  const repo = validateRepo(value.repo);
+  if (repo) result.repo = repo;
   return result;
 }
 
