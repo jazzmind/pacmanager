@@ -190,6 +190,37 @@ test('GEN-109 an "application" artifact whose sourcePath is genuinely inside the
   assert.equal(realpathSync(app.config.sourcePath), realpathSync(workdir));
 });
 
+test('GEN-111 an app-tier generation derives real envRefs from the definition\'s stored capabilities, and carries capabilities forward across the generation', async t => {
+  // "shared-data" -> pgvector, not plain "postgres": the real deployed catalog
+  // (pracman/services/catalog.json) has no separate plain-postgres kind at all -- found live,
+  // this exact mismatch hung a real generation attempt in an unwinnable repair loop. Both
+  // pacmanager's bundled default catalog and pracman's real one now declare "pgvector", so
+  // this validates identically regardless of which is loaded.
+  const store = storeFixture(t, null);
+  const app = store.create(owner, { title: 'Capability App', brief: 'test test test test', kind: 'application', accent: 'teal', tier: 'intent', capabilities: ['shared-data'] });
+  const workdir = join(store.dataDir, 'generated', app.id);
+  mkdirSync(workdir, { recursive: true });
+  writeFileSync(join(workdir, 'Dockerfile'), 'FROM node:22-alpine');
+  store.authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'application', model: 'm', sourcePath: workdir } }]);
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  assert.equal(app.generation.status, 'ready');
+  assert.deepEqual(app.config.capabilities, ['shared-data']);
+  assert.deepEqual(app.config.envRefs, { DATABASE_URL: 'pgvector' });
+});
+
+test('GEN-112 a static-tier (client-side only) generation never derives envRefs, even with server-group capabilities stored -- the safety gate forbids network access regardless', async t => {
+  const authoring = fakeAuthoring([{ status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>hi</h1>' } } }]);
+  const store = storeFixture(t, authoring);
+  const app = store.create(owner, { title: 'Static App', brief: 'test test test test', kind: 'interactive', accent: 'teal', tier: 'intent', capabilities: ['analyze', 'remember'] });
+  await store.startGeneration(owner, app.id);
+  await store.lastGeneration;
+  assert.equal(app.generation.status, 'ready');
+  assert.equal(app.config.tier, 'static');
+  assert.deepEqual(app.config.capabilities, ['analyze', 'remember']);
+  assert.equal('envRefs' in app.config, false);
+});
+
 test('GEN-110 a server restart mid-generation marks it failed instead of leaving it stuck "generating" forever', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'pac-gen-restart-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
