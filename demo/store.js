@@ -393,6 +393,10 @@ export class Store {
     this.audit(app,auditNote,p);this.save();
     return output;
   }
+  // Owner-only, read-only. Invites live in the global state.invites list, not on the app
+  // record, and until now nothing ever exposed them back to a caller -- a Share modal needs
+  // to show pending links, not just the sharedWith[] email list. Never returns the hash.
+  listInvites(p,appId){this.access(p,appId,true);const now=Date.now();return this.state.invites.filter(i=>i.appId===appId&&!i.used&&i.expires>now).map(({label,expires})=>({label,expires}));}
   invite(p,appId,label){const app=this.access(p,appId,true);if(typeof label!=='string'||label.trim().length<2||label.length>50)fail(400,'Enter a colleague’s display name');this.state.invites=this.state.invites.filter(i=>!i.used&&i.expires>Date.now());if(this.state.invites.length>=100)fail(429,'Invite limit reached');const token=randomBytes(32).toString('hex');this.state.invites.push({hash:sha(token),appId,label:label.trim(),expires:Date.now()+3600000,used:false});this.audit(app,'collaborator invitation created',p);this.save();return token;}
   accept(token){const i=this.state.invites.find(i=>i.hash===sha(token||'')&&!i.used&&i.expires>Date.now());if(!i)fail(401,'Invalid or expired access token');const session=this.tokenSession({kind:'collaborator',appId:i.appId,label:i.label});i.used=true;this.save();return session;}
   // Delete is archive-then-purge, not a single destructive action. archive() is soft and

@@ -115,7 +115,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(!body||typeof body!=='object'||Array.isArray(body))throw new DemoError(400,'JSON object required');
       }
       if(req.method==='POST'&&path==='/api/session'){
-        const token=equal(body.token,ownerToken)?store.tokenSession({kind:'owner',label:'Workspace owner'}):store.accept(body.token);
+        const token=equal(body.token,ownerToken)?store.tokenSession({kind:'owner',label:'Studio owner'}):store.accept(body.token);
         cookie(token);return json(200,{ok:true});
       }
       const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -126,7 +126,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       // proxy. See proxy-auth.js for the two independent gates (opt-in mode + shared secret)
       // that make this fail closed rather than trusting any client-supplied header.
       const principal=equal(bearer,ownerToken)?{kind:'owner',label:'Connected author'}:(store.session(sessionToken)||principalFromProxyHeaders(req));
-      if(!principal)throw new DemoError(401,'Sign in to the workspace');
+      if(!principal)throw new DemoError(401,'Sign in to the studio');
       if(path==='/mcp'){
         if(req.method!=='POST'){res.setHeader('Allow','POST');return json(405,{error:'Use POST'});}
         if(!Object.hasOwn(body,'id')){res.writeHead(202);return res.end();}
@@ -159,7 +159,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'build_application':output=store.startBuild(principal,a.id);break;
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
               case 'publish_application':store.publish(principal,a.id);output={url:origin+'/?app='+a.id+'&published=1'};break;
-              case 'graduation_link':store.access(principal,a.id,true);output={url:origin+'/api/apps/'+a.id+'/export',authentication:'Workspace browser session required'};break;
+              case 'graduation_link':store.access(principal,a.id,true);output={url:origin+'/api/apps/'+a.id+'/export',authentication:'Studio browser session required'};break;
               case 'get_assurance':{const record=assuranceRecord(store.access(principal,a.id));output={record,completeness:completeness(record)};break;}
               case 'get_assurance_schema':output={schema:assuranceSchema,guide:authoringGuide};break;
               case 'update_assurance':output=saveAssurance(store,principal,a.id,a);break;
@@ -233,7 +233,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -256,6 +256,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='export'){store.access(principal,id,true);if(!app.release)throw new DemoError(409,'Publish first');const bundle=graduationBundle(app);store.recordExport(principal,id);res.setHeader('Content-Type','application/gzip');res.setHeader('Content-Disposition','attachment; filename="pac-graduation.tar.gz"');return res.end(bundle);}
         if(action==='deployment-status')return json(200,await store.deploymentStatus(principal,id));
         if(action==='deployment-logs')return json(200,await store.deploymentLogs(principal,id,Number(url.searchParams.get('tail'))||100));
+        if(action==='invites')return json(200,store.listInvites(principal,id));
       }
       // DELETE is archive, not purge -- soft, reversible, hides the app from list() and
       // nothing else. Deliberately only reachable on the bare app path (no action suffix);
