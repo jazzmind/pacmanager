@@ -116,3 +116,15 @@ test('KIND-016 definition() re-validates its own normalized repo output unchange
   const second = definition({ title: first.title, brief: first.brief, template: first.template, accent: first.accent, repo: first.repo });
   assert.deepEqual(second.repo, first.repo);
 });
+
+test('KIND-017 adding capabilities to a legacy record leaves its sourceDigest byte-identical when capabilities is absent', () => {
+  // Same pinned digest as KIND-002/KIND-015 -- capabilities is appended last of all, so a
+  // record that never sets it must still hash exactly as it did before this field existed.
+  assert.equal(compile(legacyTemplate).sourceDigest, '0b67d608352c765bac86539f3aefaad468fbf5bab758c08532f44ade5cccd860');
+});
+
+test('KIND-018 capabilities rejects an unknown id, and expands an implied dependency ("documents" brings "shared-data")', () => {
+  assert.throws(() => definition({ ...legacyTemplate, capabilities: ['not-a-real-capability'] }), /Unknown capability/);
+  const config = definition({ ...legacyTemplate, capabilities: ['documents'] });
+  assert.deepEqual(config.capabilities, ['documents', 'shared-data']);
+});

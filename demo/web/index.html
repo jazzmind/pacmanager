@@ -80,7 +80,19 @@
 </section>
 </main>
 </div>
-<dialog id="editor"><form id="definition-form"><p class="eyebrow">FROM IDEA TO APPLICATION</p><h2 id="editor-title">What would you like to build?</h2><label>Application name<input id="app-title" required minlength="3" maxlength="80" placeholder="Claims team workspace"></label><label>Describe what your team needs<textarea id="brief" required minlength="10" maxlength="3000" placeholder="A clone of the arcade game Tapper, insurance themed. Or: help adjusters review synthetic claims, share guidance and discuss follow-ups."></textarea></label><div class="fields"><label id="kind-field">What are you building?<select id="kind"><option value="interactive">Interactive page or game</option><option value="knowledge">Knowledge workspace / digital expert</option><option value="application">Application (client + API)</option><option value="auto">Let it decide</option></select></label><label id="template-field" hidden>Layout<select id="template"><option value="claims">Claims workbench</option><option value="knowledge">Knowledge workspace</option></select></label><label>Accent<select id="accent">{{PAC_ACCENT_OPTIONS}}</select></label></div><div class="hint" id="kind-guidance"></div><p class="hint" id="editor-hint">Real, working source is generated for this brief — not a template with the title pasted in.</p><p class="hint warn" id="editor-authoring-warning" hidden>No AI connected yet — this saves as a draft. Ask your admin to set PAC_AUTHORING_ADAPTER, then generate it from here.</p><div class="dialog-actions"><button type="button" data-close="editor" class="subtle">Cancel</button><button id="save-definition">Save &amp; generate</button></div></form></dialog>
+<dialog id="editor"><form id="definition-form"><p class="eyebrow">FROM IDEA TO APPLICATION</p><h2 id="editor-title">What would you like to build?</h2>
+<div id="gallery" class="gallery"></div>
+<div id="editor-fields" hidden>
+  <button type="button" id="gallery-back" class="subtle">← Choose a different starting point</button>
+  <label>Application name<input id="app-title" required minlength="3" maxlength="80" placeholder="Claims team workspace"></label>
+  <label>Describe what your team needs<textarea id="brief" required minlength="10" maxlength="3000" placeholder="A clone of the arcade game Tapper, insurance themed. Or: help adjusters review synthetic claims, share guidance and discuss follow-ups."></textarea></label>
+  <label>Accent<select id="accent">{{PAC_ACCENT_OPTIONS}}</select></label>
+  <div id="capability-picker"><p class="eyebrow">WHAT SHOULD IT BE ABLE TO DO?</p><div id="capability-groups"></div></div>
+  <p class="hint" id="kind-derived"></p>
+  <p class="hint" id="editor-hint">Real, working source is generated for this brief — not a template with the title pasted in.</p>
+  <p class="hint warn" id="editor-authoring-warning" hidden>No AI connected yet — this saves as a draft. Ask your admin to set PAC_AUTHORING_ADAPTER, then generate it from here.</p>
+</div>
+<div class="dialog-actions"><button type="button" data-close="editor" class="subtle">Cancel</button><button id="save-definition" hidden>Save &amp; generate</button></div></form></dialog>
 <dialog id="connection"><p class="eyebrow">YOUR AUTHORING ASSISTANT</p><h2>Connect Claude through MCP.</h2><p>Start PAC Manager locally, then add this server to your client's MCP configuration. Replace both paths with absolute paths on your machine.</p><pre>{"mcpServers":{"pacmanager":{
   "command":"node",
   "args":["/absolute/pacmanager/demo/mcp-stdio.js"],

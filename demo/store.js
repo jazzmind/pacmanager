@@ -4,6 +4,7 @@ import { randomUUID,randomBytes } from 'node:crypto';
 import { definition,sha,compile,serviceCatalog,sourceIssues,SOURCE_LIMITS,FORBIDDEN_LABELS } from './definition.js';
 import { graduationFiles } from './archive.js';
 import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
+import { deriveEnvRefs } from './capabilities.js';
 
 const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
 const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATTEMPTS||3));
@@ -217,6 +218,7 @@ export class Store {
         try{
           result=await authoring.generate({artifactId:app.id,principalId:p.label,payload:{
             kind,title:app.config.title,brief:app.config.brief,accent:app.config.accent,
+            capabilities:app.config.capabilities||[],
             attempt:n,maxAttempts:AUTHORING_MAX_ATTEMPTS,
             constraints:{...SOURCE_LIMITS,forbidden:FORBIDDEN_LABELS,requireBriefingsMarker:kind==='knowledge'},
             workdir,previousAttempt,
@@ -257,6 +259,13 @@ export class Store {
           const newConfig={title:app.config.title,brief:app.config.brief,kind:output.kind,accent:app.config.accent,tier:sourcePath?'app':'static'};
           if(sourcePath)newConfig.sourcePath=sourcePath;else newConfig.source=output.source;
           if(app.config.repo)newConfig.repo=app.config.repo; // a repo binding must survive a revision, not just the initial generation
+          if(app.config.capabilities){
+            newConfig.capabilities=app.config.capabilities; // must survive a revision too, not just the initial generation
+            // Only the app tier can actually reach a service (the static tier's safety gate
+            // forbids all network access) -- derived here, not asked of the model, so it can
+            // never disagree with what the picker promised.
+            if(sourcePath){const envRefs=deriveEnvRefs(app.config.capabilities);if(Object.keys(envRefs).length)newConfig.envRefs=envRefs;}
+          }
           app.config=definition(newConfig);
           app.revision++;
           app.generation.status='ready';app.generation.revision=app.revision;app.generation.model=output.model;app.generation.rationale=output.rationale||null;

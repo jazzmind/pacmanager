@@ -4,6 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import { treeDigest } from './tree-digest.js';
 import { loadBrand } from './brand.js';
 import { loadCatalog } from './services.js';
+import { CAPABILITY_IDS, expandCapabilities } from './capabilities.js';
 
 // Single accent palette, sourced from the active brand pack (PAC_BRAND_PACK, else the bundled
 // default). Previously duplicated verbatim in compileStatic() and compile() -- see
@@ -226,6 +227,18 @@ function validateRepo(value) {
   return { mode: value.mode, url: value.url.trim(), branch: (value.branch || 'main').trim(), path: value.path?.trim() || null };
 }
 
+// What the app should be able to do, in business language (demo/capabilities.js) -- stored on
+// every tier so the picker's choices survive a revision, and so a generated app-tier
+// artifact's envRefs can be derived from them (see store.js's startGeneration). Expanded (not
+// just validated) so a stored record always carries the FULL implied set -- e.g. "documents"
+// always brings "shared-data" along -- rather than relying on every future reader to
+// remember to re-expand it themselves.
+function validateCapabilities(value) {
+  if (!Array.isArray(value)) throw new Error('capabilities must be an array of capability ids');
+  for (const id of value) if (!CAPABILITY_IDS.includes(id)) throw new Error(`Unknown capability: ${id}`);
+  return expandCapabilities(value).sort();
+}
+
 export function definition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Application definition required');
   const tier = value.tier || 'template';
@@ -237,7 +250,7 @@ export function definition(value) {
   // standing in for it. Only meaningful for a kind-based record: a legacy template-only record
   // has nothing to generate, so it must go straight to a real tier.
   if (tier === 'intent' && !hasKind) throw new Error('tier "intent" requires kind');
-  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier', 'repo',
+  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier', 'repo', 'capabilities',
     ...(tier === 'static' ? ['source'] : []),
     ...(tier === 'app' ? APP_TIER_FIELDS : [])];
   for (const k of Object.keys(value)) if (!allowed.includes(k)) throw new Error(`Unsupported definition field: ${k}`);
@@ -264,6 +277,9 @@ export function definition(value) {
   // exact key order and digest.
   const repo = validateRepo(value.repo);
   if (repo) result.repo = repo;
+  // Appended last of all, same discipline as repo/kind above -- a record predating the
+  // capability picker keeps its exact key order and digest.
+  if (value.capabilities !== undefined) result.capabilities = validateCapabilities(value.capabilities);
   return result;
 }
 

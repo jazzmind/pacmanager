@@ -83,6 +83,15 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         res.setHeader('Content-Type',assetPath.endsWith('.svg')?'image/svg+xml':assetPath.endsWith('.png')?'image/png':'application/octet-stream');
         return res.end(readFileSync(assetPath));
       }
+      if(req.method==='GET'&&path==='/capabilities.js'){
+        // The one static asset served from demo/ itself, not demo/web/ -- shared verbatim
+        // between the server (definition.js validates against it) and the browser (the
+        // gallery/tick-list renders from it), so the picker can never drift from what the
+        // backend actually accepts. Zero Node-specific imports by design, so it's valid to
+        // hand straight to a <script type="module"> as-is.
+        res.setHeader('Content-Type','text/javascript');
+        return res.end(readFileSync(new URL('./capabilities.js',import.meta.url),'utf8'));
+      }
       if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css','/admin.html','/admin.js'].includes(path)){
         const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');
         let content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');

@@ -1,6 +1,7 @@
 import { initGraduation } from './graduation-ui.js';
+import { CAPABILITIES,CAPABILITY_GROUPS,USE_CASES,SENSITIVE_DATA_NOTICE,deriveKind,expandCapabilities } from './capabilities.js';
 const $=id=>document.getElementById(id);
-let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',editing=false,previewKey='',historyOpen=false,selectedRelease=null,currentCards=[];
+let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',previewKey='',historyOpen=false,selectedRelease=null,currentCards=[];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
@@ -58,31 +59,43 @@ function showView(v){
   updateCrumb(v);
 }
 
-// What each artifact kind is, what it genuinely cannot do, and one worked example -- shown in
-// the create dialog so "what can I build?" has a real answer instead of four bare option labels.
-const KIND_GUIDANCE={
-  interactive:{what:'A self-contained page or small game — everything runs client-side in a sandboxed preview, no server involved.',cant:"No fetch/XHR/WebSocket, no network access of any kind, nothing server-side.",example:'Example: a personal dashboard that tracks priorities, calendar and AI usage budgets — static HTML/CSS/JS with checkboxes that persist to localStorage once deployed (ephemeral in preview, since the preview iframe has no origin to persist to).'},
-  knowledge:{what:'A knowledge workspace / "digital expert" layout that presents agent-run briefings recorded via record_agent_run.',cant:'Same client-side-only restrictions as interactive — briefings are injected by the host, never fetched live.',example:'Example: a weekly market-intel page your agent updates on a schedule.'},
-  application:{what:'A real client+API project — a Dockerfile plus whatever server code it needs, actually built and run.',cant:'Not subject to the static-tier restrictions, but the model has to hand you something genuinely runnable.',example:"Example: something like chatprc. Be honest with yourself here — this MCP bridge has never been exercised against a live Claude session end to end, and chatprc itself has no MCP server of its own (its \"MCP skill\" is a Claude Code skill for deploykit, not an MCP server). Treat this path as unproven, not turnkey."},
-  auto:{what:'Let the model read your brief and choose interactive, knowledge or application itself.',cant:'You give up control of the exact kind; it reports back what it picked and why.',example:'Good default when you\'re not sure which of the above fits.'},
-};
-function updateKindGuidance(){const k=$('kind').value,g=KIND_GUIDANCE[k]||KIND_GUIDANCE.auto;$('kind-guidance').innerHTML=`${esc(g.what)} ${esc(g.cant)}<span class="kind-guidance-example">${esc(g.example)}</span>`;}
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
 async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 async function apiDelete(path){const r=await fetch('/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
-// A legacy (kind-less) app keeps editing through the old two-value "template" layout picker,
-// exactly as before -- dual-accept, see demo/definition.js. Every other case (new apps always,
-// and any app that already has a kind) uses the real artifact-type picker instead.
-function editor(isEdit){
-  editing=isEdit;const legacy=isEdit&&!app.config.kind;
-  $('app-title').value=isEdit?app.config.title:'';$('brief').value=isEdit?app.config.brief:'';
-  $('accent').value=isEdit?app.config.accent:$('accent').options[0]?.value;
-  $('kind-field').hidden=legacy;$('template-field').hidden=!legacy;
-  if(legacy)$('template').value=app.config.template;else $('kind').value=isEdit?(app.config.kind||'interactive'):'interactive';
-  $('editor-authoring-warning').hidden=legacy||Boolean(me?.authoring?.available);
-  $('editor-title').textContent=isEdit?'Update your application':'What would you like to build?';
-  $('kind-guidance').hidden=legacy;updateKindGuidance();
+
+// The new-application flow: a gallery of business use cases (each a starting set of
+// capabilities, not a kind), a "Describe it myself" tick-list for anything else, and a
+// derived kind nobody has to choose directly -- see demo/capabilities.js. This dialog is only
+// ever used to CREATE an application now; editing an existing one's source happens through
+// the chat's "Request a change" flow instead (see RUN.regenerate for the from-scratch escape
+// hatch), so there is no legacy edit-mode branch here anymore.
+const KIND_DESCRIPTIONS={interactive:'a self-contained page — everything runs in your browser, nothing server-side',knowledge:'a knowledge page that displays agent-written briefings',application:'a real server application — a Dockerfile, built and deployed like any other service'};
+let explicitCapabilities=new Set();
+const effectiveCapabilities=()=>new Set(expandCapabilities([...explicitCapabilities]));
+function renderGallery(){
+  $('gallery').innerHTML=USE_CASES.map(u=>`<button type="button" class="usecase-card" data-usecase="${u.id}"><strong>${esc(u.label)}</strong><p>${esc(u.description)}</p></button>`).join('')
+    +`<button type="button" class="usecase-card usecase-custom" data-usecase="custom"><strong>Describe it myself</strong><p>Start from scratch and pick capabilities directly.</p></button>`;
+}
+function renderCapabilityGroups(){
+  const effective=effectiveCapabilities();
+  $('capability-groups').innerHTML=CAPABILITY_GROUPS.map(group=>{
+    const items=CAPABILITIES.filter(c=>c.group===group.id);
+    return `<div class="cap-group"><h4>${esc(group.label)}</h4><p class="hint">${esc(group.hint)}</p>${items.map(c=>{
+      const checked=effective.has(c.id),implied=checked&&!explicitCapabilities.has(c.id),disabled=group.id==='future'||implied;
+      return `<label class="cap-item${disabled?' cap-disabled':''}"><input type="checkbox" data-cap="${c.id}"${checked?' checked':''}${disabled?' disabled':''}><span><strong>${esc(c.label)}</strong>${group.id==='future'?'<em class="cap-tag">not yet</em>':implied?'<em class="cap-tag">included</em>':''}<small>${esc(c.description)}</small></span></label>`;
+    }).join('')}</div>`;
+  }).join('')+`<p class="hint warn">${esc(SENSITIVE_DATA_NOTICE)}</p>`;
+}
+function updateKindDerived(){const kind=deriveKind([...effectiveCapabilities()]);$('kind-derived').textContent=`This will be built as ${KIND_DESCRIPTIONS[kind]}.`;}
+function showEditorFields(){$('gallery').hidden=true;$('editor-fields').hidden=false;$('save-definition').hidden=false;renderCapabilityGroups();updateKindDerived();}
+function editor(){
+  $('app-title').value='';$('brief').value='';$('accent').value=$('accent').options[0]?.value;
+  explicitCapabilities=new Set();
+  $('gallery').hidden=false;$('editor-fields').hidden=true;$('save-definition').hidden=true;
+  $('editor-authoring-warning').hidden=Boolean(me?.authoring?.available);
+  $('editor-title').textContent='What would you like to build?';
+  renderGallery();
   $('editor').showModal();
 }
 
@@ -203,7 +216,7 @@ function renderHistory(){
 async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';await refresh();}
 $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').value});$('token').value='';await enter();});
 $('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
-$('new').onclick=$('start').onclick=()=>editor(false);
+$('new').onclick=$('start').onclick=()=>editor();
 $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
 $('kind').onchange=updateKindGuidance;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
@@ -211,7 +224,7 @@ $('crumb-home').onclick=action(async()=>{selected=null;history.replaceState(null
 const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
 $('home').onclick=openApp;$('switcher-list').onclick=openApp;
 $('crumb-toggle').onclick=e=>{e.stopPropagation();renderSwitcher();$('switcher-popover').hidden=!$('switcher-popover').hidden;};
-$('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;editor(false);};
+$('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;editor();};
 $('user-toggle').onclick=e=>{e.stopPropagation();$('user-dropdown').hidden=!$('user-dropdown').hidden;};
 document.addEventListener('click',()=>{$('user-dropdown').hidden=true;$('switcher-popover').hidden=true;});
 $('dd-regenerate').onclick=action(async()=>{$('user-dropdown').hidden=true;const message=await RUN.regenerate();await refresh();if(message)toast(message);});
@@ -248,16 +261,18 @@ async function openShare(){
 $('share-btn').onclick=action(openShare);
 $('share-list').onclick=action(async e=>{const b=e.target.closest('[data-unshare]');if(!b)return;await api('apps/'+app.id+'/unshare',{email:b.dataset.unshare});await refresh();await openShare();});
 $('share-form').onsubmit=action(async()=>{await api('apps/'+app.id+'/share',{email:$('share-email').value});$('share-email').value='';await refresh();await openShare();});
+$('gallery').onclick=e=>{const b=e.target.closest('[data-usecase]');if(!b)return;const useCase=USE_CASES.find(u=>u.id===b.dataset.usecase);explicitCapabilities=new Set(useCase?useCase.capabilities:[]);showEditorFields();};
+$('gallery-back').onclick=()=>{$('editor-fields').hidden=true;$('save-definition').hidden=true;$('gallery').hidden=false;};
+$('capability-groups').onchange=e=>{
+  const cb=e.target.closest('[data-cap]');if(!cb)return;
+  if(cb.checked)explicitCapabilities.add(cb.dataset.cap);else explicitCapabilities.delete(cb.dataset.cap);
+  renderCapabilityGroups();updateKindDerived();
+};
 $('definition-form').onsubmit=action(async()=>{
-  const legacy=editing&&!app.config.kind;
-  const base={title:$('app-title').value,brief:$('brief').value,accent:$('accent').value};
-  // Non-legacy always resets to tier "intent" -- editing a brief means regenerating it, not
-  // hand-patching whatever source (if any) was there before. See demo/definition.js's dual
-  // accept: template and kind are mutually exclusive, never sent together.
-  const config=legacy?{...base,template:$('template').value,...(app.config.tier==='static'?{tier:app.config.tier,source:app.config.source}:{})}:{...base,kind:$('kind').value,tier:'intent'};
-  const result=editing?await api('apps/'+app.id+'/definition',{config,revision:app.revision}):await api('apps',config);
+  const capabilities=[...effectiveCapabilities()];
+  const config={title:$('app-title').value,brief:$('brief').value,accent:$('accent').value,kind:deriveKind(capabilities),tier:'intent',capabilities};
+  const result=await api('apps',config);
   selected=result.id;published=false;$('editor').close();await refresh();
-  if(legacy){toast('Definition saved. Ready to build.');return;}
   toast('Definition saved. Generating your application…');
   api('apps/'+selected+'/generate',{}).then(refresh).catch(error=>toast(error.message));
 });
