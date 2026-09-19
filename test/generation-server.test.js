@@ -161,6 +161,32 @@ test('GENSRV-008 rollback_application MCP tool round-trips through the real MCP 
 // compiled JS + CSS): build-worker.js's own stdin-read guard was hardcoded at 16000 bytes --
 // far below definition.js's actual 512KB safety-gate limit -- so a real, safety-gate-legal
 // generated app failed every build with "Input too large" before compile() ever ran.
+test('GENSRV-010 previewing a specific retained release (not just the latest published one) returns that release\'s own content', async t => {
+  const authoring = fakeAuthoring([
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v1</h1>' } } },
+    { status: 'ok', output: { kind: 'interactive', model: 'm', source: { 'index.html': '<h1>v2</h1>' } } },
+  ]);
+  const { runtime, call, base, ownerToken } = await fixture(t, authoring);
+  const created = await call('/api/apps', { title: 'Tapper Clone', brief: 'An arcade game, insurance themed.', kind: 'interactive', accent: 'teal', tier: 'intent' });
+  await call('/api/apps/' + created.data.id + '/generate', {});
+  await runtime.store.lastGeneration;
+  await call('/api/apps/' + created.data.id + '/build', {});
+  await runtime.store.lastBuild;
+  await call('/api/apps/' + created.data.id + '/publish', {}); // release 1, v1
+  await call('/api/apps/' + created.data.id + '/generate', { changeRequest: 'v1 to v2' });
+  await runtime.store.lastGeneration;
+  await call('/api/apps/' + created.data.id + '/build', {});
+  await runtime.store.lastBuild;
+  await call('/api/apps/' + created.data.id + '/publish', {}); // release 2, v2
+
+  const fetchRelease = async n => (await fetch(base + '/api/apps/' + created.data.id + '/preview?release=' + n, { headers: { Authorization: 'Bearer ' + ownerToken } })).text();
+  assert.match(await fetchRelease(1), /v1/);
+  assert.match(await fetchRelease(2), /v2/);
+
+  const missing = await fetch(base + '/api/apps/' + created.data.id + '/preview?release=99', { headers: { Authorization: 'Bearer ' + ownerToken } });
+  assert.equal(missing.status, 404);
+});
+
 test('GENSRV-009 a hand-authored static app well over the old 16000-byte stdin cap, but still under the 512KB safety limit, builds successfully', async t => {
   const { runtime, call } = await fixture(t, null);
   const bigCss = '.padding{color:red}\n'.repeat(1500); // ~30KB, comfortably past the stale 16000-byte cap

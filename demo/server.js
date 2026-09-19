@@ -234,7 +234,12 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       if(req.method==='GET'){
         if(!action)return json(200,store.view(principal,id));
         if(action==='preview'){
-          const result=url.searchParams.get('published')==='1'?app.release?.result:app.build?.status==='ready'?app.build.result:null;
+          const releaseParam=url.searchParams.get('release');
+          // A specific past release -- the "view earlier versions" affordance the release
+          // history panel needs, not just a bare number/date list with a blind rollback button.
+          const historical=releaseParam?(app.releases||[]).find(r=>r.number===Number(releaseParam)):null;
+          if(releaseParam&&!historical)throw new DemoError(404,`Release ${releaseParam} is not retained (kept: last ${(app.releases||[]).length}).`);
+          const result=historical?historical.result:url.searchParams.get('published')==='1'?app.release?.result:app.build?.status==='ready'?app.build.result:null;
           if(!result)throw new DemoError(409,'Build or publish this application first');
           if(app.config.tier==='app')return json(200,{tier:'app',preview:'not available for the app tier — an app-tier release has no inline HTML to render; use deployment_status or deployment_logs once deployed',sourceDigest:result.sourceDigest,fileCount:result.fileCount,gitCommit:result.gitCommit,deployments:app.deployments});
           const generated=app.config.tier==='static';
