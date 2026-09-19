@@ -37,6 +37,7 @@ export class Store {
     for(const app of this.state.apps)if(!app.deployments)app.deployments=[];
     for(const app of this.state.apps)if(app.generation===undefined)app.generation=null;
     for(const app of this.state.apps)if(app.archivedAt===undefined){app.archivedAt=null;app.archivedBy=null;}
+    for(const app of this.state.apps)if(!app.releases)app.releases=[];
     this.save();this.running=0;this.generating=0;this._authoringCache=null;
   }
   save(){writeFileSync(this.file+'.tmp',JSON.stringify(this.state),{mode:0o600});renameSync(this.file+'.tmp',this.file);}
@@ -181,17 +182,29 @@ export class Store {
    * an "application" artifact, config.sourcePath) through definition() — never by hand-merging
    * fields — and bumps app.revision exactly once, on success only, which is what makes the
    * existing publish guard (build.revision!==app.revision) correctly block publishing a stale
-   * build after a regenerate, for free. */
-  async startGeneration(p,appId){
+   * build after a regenerate, for free.
+   *
+   * Revise vs. regenerate-from-scratch: found live that these had collapsed into the same
+   * thing — every call here started from nothing, because the only caller (the UI) reset the
+   * app to tier:'intent' before ever calling this, discarding config.source first. That made
+   * "make one small change to a real artifact" impossible: every edit was a full re-roll.
+   * Now, when the app already has source (tier !== 'intent'), a changeRequest is required and
+   * the existing source is sent to the adapter as `currentSource` alongside it — a revision,
+   * not a rewrite. A caller that genuinely wants to start over must reset tier to 'intent'
+   * first (a separate, explicit, destructive step), not just omit changeRequest. */
+  async startGeneration(p,appId,{changeRequest}={}){
     const app=this.access(p,appId,true);
     const authoring=this.requireAuthoring();
     if(app.generation?.status==='generating')fail(409,'Generation already running');
     if(app.build?.status==='building')fail(409,'Wait for the current build to finish before regenerating');
     if(this.generating>=2)fail(429,'Two generations are already running');
     if(!app.config.kind)fail(409,'This application has no artifact kind to generate — it is a classic template-tier app.');
+    const isRevise=app.config.tier!=='intent'&&Boolean(app.config.source);
+    if(isRevise&&(typeof changeRequest!=='string'||!changeRequest.trim()))fail(400,'Describe the change you want (changeRequest) to revise an existing artifact. To regenerate it from scratch instead, reset it to tier "intent" first — that discards the current source.');
+    const currentSource=isRevise?app.config.source:null;
     const kind=app.config.kind,job=id();
     this.generating++;
-    app.generation={id:job,status:'generating',requestedAtRevision:app.revision,attempts:[],logs:[{at:now(),text:`Requested generation · ${kind} · ${authoring.mode}`}]};
+    app.generation={id:job,status:'generating',requestedAtRevision:app.revision,attempts:[],logs:[{at:now(),text:`Requested ${isRevise?'revision':'generation'} · ${kind} · ${authoring.mode}`}]};
     this.save();
     const workdir=(kind==='application'||kind==='auto')?join(GENERATED_APPS_DIR||this.dataDir,'generated',app.id):null;
     if(workdir)mkdirSync(workdir,{recursive:true,mode:0o700});
@@ -207,6 +220,7 @@ export class Store {
             attempt:n,maxAttempts:AUTHORING_MAX_ATTEMPTS,
             constraints:{...SOURCE_LIMITS,forbidden:FORBIDDEN_LABELS,requireBriefingsMarker:kind==='knowledge'},
             workdir,previousAttempt,
+            currentSource,changeRequest:isRevise?changeRequest.trim():null,
           }});
         }catch(error){lastIssues=[error.message];reject(`failed to reach the authoring adapter: ${error.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
         // An adapter-reported error is usually a transport/credential problem (broken gateway,
@@ -242,6 +256,7 @@ export class Store {
         try{
           const newConfig={title:app.config.title,brief:app.config.brief,kind:output.kind,accent:app.config.accent,tier:sourcePath?'app':'static'};
           if(sourcePath)newConfig.sourcePath=sourcePath;else newConfig.source=output.source;
+          if(app.config.repo)newConfig.repo=app.config.repo; // a repo binding must survive a revision, not just the initial generation
           app.config=definition(newConfig);
           app.revision++;
           app.generation.status='ready';app.generation.revision=app.revision;app.generation.model=output.model;app.generation.rationale=output.rationale||null;
@@ -282,7 +297,38 @@ export class Store {
     this.audit(app,'agent run recorded ('+record.agentId+'): '+record.topic,p);this.save();return record;
   }
   bind(p,appId){const app=this.access(p,appId,true);app.binding=true;app.claims=JSON.parse(readFileSync(new URL('./mock-claims.json',import.meta.url)));this.audit(app,'mock claims binding granted',p);this.save();}
-  publish(p,appId){const app=this.access(p,appId,true);if(app.build?.status!=='ready'||app.build.revision!==app.revision)fail(409,'Build the current draft before publishing');const previous=app.release?.result.config;app.release={number:(app.release?.number||0)+1,publishedAt:now(),revision:app.revision,mode:app.build.mode,result:structuredClone(app.build.result)};app.releaseHistory=[...(app.releaseHistory||[]),{release:app.release.number,definitionRevision:app.revision,at:app.release.publishedAt,sourceDigest:app.release.result.sourceDigest,changedFields:Object.keys(app.config).filter(k=>!previous||previous[k]!==app.config[k]),actor:p.label}].slice(-50);this.audit(app,'published release '+app.release.number,p);this.save();return app.release;}
+  publish(p,appId){
+    const app=this.access(p,appId,true);
+    if(app.build?.status!=='ready'||app.build.revision!==app.revision)fail(409,'Build the current draft before publishing');
+    const previous=app.release?.result.config;
+    app.release={number:(app.release?.number||0)+1,publishedAt:now(),revision:app.revision,mode:app.build.mode,result:structuredClone(app.build.result)};
+    app.releaseHistory=[...(app.releaseHistory||[]),{release:app.release.number,definitionRevision:app.revision,at:app.release.publishedAt,sourceDigest:app.release.result.sourceDigest,changedFields:Object.keys(app.config).filter(k=>!previous||previous[k]!==app.config[k]),actor:p.label}].slice(-50);
+    // Retained full releases, bounded far tighter than releaseHistory's lightweight metadata
+    // list above (each entry here embeds a complete compiled result, not just a digest).
+    // Previously publish() only ever overwrote app.release -- nothing was kept behind it, so
+    // a bad iteration was unrecoverable. This is what rollback() below restores from.
+    app.releases=[...(app.releases||[]),{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision,mode:app.release.mode,config:structuredClone(app.config),result:app.release.result}].slice(-10);
+    this.audit(app,'published release '+app.release.number,p);this.save();return app.release;
+  }
+  // Rolls FORWARD to old content rather than rewriting history: publishes a new release number
+  // whose config/result equal a retained prior release's, exactly. Keeps release numbers
+  // monotonic (everything else in the system -- deploy tracking, digests, changedFields --
+  // already assumes that), and needs no rebuild since `result` was already byte-verified
+  // against that config when it was first published.
+  rollback(p,appId,releaseNumber){
+    const app=this.access(p,appId,true);
+    const target=(app.releases||[]).find(r=>r.number===releaseNumber);
+    if(!target)fail(404,`Release ${releaseNumber} is not retained for rollback (kept: last ${(app.releases||[]).length}).`);
+    app.config=structuredClone(target.config);
+    app.revision++;
+    app.build={id:id(),status:'ready',revision:app.revision,mode:target.mode,logs:[{at:now(),text:`Rolled back to release ${releaseNumber}.`}],result:target.result};
+    app.release={number:(app.release?.number||0)+1,publishedAt:now(),revision:app.revision,mode:target.mode,result:structuredClone(target.result)};
+    app.releaseHistory=[...(app.releaseHistory||[]),{release:app.release.number,definitionRevision:app.revision,at:app.release.publishedAt,sourceDigest:app.release.result.sourceDigest,changedFields:['rollback to release '+releaseNumber],actor:p.label}].slice(-50);
+    app.releases=[...(app.releases||[]),{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision,mode:app.release.mode,config:structuredClone(app.config),result:app.release.result}].slice(-10);
+    this.audit(app,`rolled back to release ${releaseNumber} (published as new release ${app.release.number})`,p);
+    this.save();
+    return app.release;
+  }
   requireRuntime(){if(!this.runtime)fail(501,'No runtime adapter configured. Set PAC_RUNTIME_ADAPTER to enable deployment.');return this.runtime;}
   unwrap(result){if(result.status==='error')fail(502,'Adapter reported an error: '+result.message);return result.output;}
   async deployApplication(p,appId){
@@ -389,5 +435,8 @@ export class Store {
     // (source text) today, only issue-string lists and counts, but this is the seam that
     // stops that changing silently as the generation object grows.
     generation:app.generation?{status:app.generation.status,requestedAtRevision:app.generation.requestedAtRevision,revision:app.generation.revision||null,model:app.generation.model||null,rationale:app.generation.rationale||null,attempts:app.generation.attempts,logs:app.generation.logs}:null,
-    release:app.release?{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision}:null};}
+    release:app.release?{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision}:null,
+    // Light summary only -- each retained release embeds a full compiled result, so the UI's
+    // rollback picker gets numbers/timestamps to choose from, not the payloads themselves.
+    releases:(app.releases||[]).map(r=>({number:r.number,publishedAt:r.publishedAt}))};}
 }
