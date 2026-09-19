@@ -218,7 +218,6 @@ $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').valu
 $('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
 $('new').onclick=$('start').onclick=()=>editor();
 $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
-$('kind').onchange=updateKindGuidance;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 $('crumb-home').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
 const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
