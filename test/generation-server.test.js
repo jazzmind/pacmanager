@@ -156,3 +156,19 @@ test('GENSRV-008 rollback_application MCP tool round-trips through the real MCP 
   assert.equal(rollback.data.result.isError, true);
   assert.match(rollback.data.result.content[0].text, /not retained for rollback/);
 });
+
+// Found live while proving the model on a real artifact (the personal dashboard, ~24KB of
+// compiled JS + CSS): build-worker.js's own stdin-read guard was hardcoded at 16000 bytes --
+// far below definition.js's actual 512KB safety-gate limit -- so a real, safety-gate-legal
+// generated app failed every build with "Input too large" before compile() ever ran.
+test('GENSRV-009 a hand-authored static app well over the old 16000-byte stdin cap, but still under the 512KB safety limit, builds successfully', async t => {
+  const { runtime, call } = await fixture(t, null);
+  const bigCss = '.padding{color:red}\n'.repeat(1500); // ~30KB, comfortably past the stale 16000-byte cap
+  const created = await call('/api/apps', { title: 'Big Static App', brief: 'A hand-authored static app with a large stylesheet.', kind: 'interactive', accent: 'teal', tier: 'static', source: { 'index.html': '<h1>hi</h1>', 'styles.css': bigCss } });
+  assert.equal(created.status, 201);
+  const build = await call('/api/apps/' + created.data.id + '/build', {});
+  assert.equal(build.status, 202);
+  await runtime.store.lastBuild;
+  const final = await call('/api/apps/' + created.data.id);
+  assert.equal(final.data.build.status, 'ready');
+});
