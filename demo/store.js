@@ -1,4 +1,4 @@
-import { mkdirSync,readFileSync,writeFileSync,renameSync,existsSync,realpathSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync,renameSync,existsSync,realpathSync,rmSync } from 'node:fs';
 import { join,sep } from 'node:path';
 import { randomUUID,randomBytes } from 'node:crypto';
 import { definition,sha,compile,serviceCatalog,sourceIssues,SOURCE_LIMITS,FORBIDDEN_LABELS } from './definition.js';
@@ -36,6 +36,7 @@ export class Store {
     for(const app of this.state.apps)if(app.generation?.status==='generating'){app.generation.status='failed';app.generation.logs.push({at:now(),text:'Server restarted during generation. Retry.'});}
     for(const app of this.state.apps)if(!app.deployments)app.deployments=[];
     for(const app of this.state.apps)if(app.generation===undefined)app.generation=null;
+    for(const app of this.state.apps)if(app.archivedAt===undefined){app.archivedAt=null;app.archivedBy=null;}
     this.save();this.running=0;this.generating=0;this._authoringCache=null;
   }
   save(){writeFileSync(this.file+'.tmp',JSON.stringify(this.state),{mode:0o600});renameSync(this.file+'.tmp',this.file);}
@@ -63,10 +64,22 @@ export class Store {
     if(owner&&!isAdmin&&!this.isAppOwner(principal,app))fail(403,'Only the owner can do this');
     return app;
   }
-  list(p){
+  // includeArchived defaults false so a normal app list never shows an archived app -- the
+  // admin/purge surface is the one caller that passes true. Added: generation/release/
+  // createdAt/lastDeployment, none of which list() exposed before -- ui.js already branches
+  // on a.generation?.status==='generating' for the sidebar's "Generating" label, but that
+  // field was never actually present here, so the branch could never fire. See
+  // docs/implementation-status.md (or the platform gap-analysis notes) for why this mattered.
+  list(p,{includeArchived=false}={}){
     const isAdmin=p.kind==='owner';
-    return this.state.apps.filter(a=>isAdmin||(p.kind==='collaborator'&&a.id===p.appId)||this.isAppOwner(p,a)||this.isSharedWith(p,a))
-      .map(a=>({id:a.id,config:a.config,revision:a.revision,build:a.build?{status:a.build.status}:null,published:Boolean(a.release),documents:a.documents.length,ownerEmail:a.ownerEmail||null,sharedWith:a.sharedWith||[]}));
+    return this.state.apps.filter(a=>includeArchived||!a.archivedAt)
+      .filter(a=>isAdmin||(p.kind==='collaborator'&&a.id===p.appId)||this.isAppOwner(p,a)||this.isSharedWith(p,a))
+      .map(a=>({id:a.id,config:a.config,revision:a.revision,build:a.build?{status:a.build.status}:null,
+        generation:a.generation?{status:a.generation.status}:null,
+        published:Boolean(a.release),release:a.release?{number:a.release.number}:null,
+        documents:a.documents.length,ownerEmail:a.ownerEmail||null,sharedWith:a.sharedWith||[],
+        createdAt:a.createdAt,archivedAt:a.archivedAt||null,
+        lastDeployment:a.deployments?.length?a.deployments[a.deployments.length-1].status:null}));
   }
   create(p,config){
     // Both 'owner' (admin) and 'user' (any authenticated tenant member, via proxy-auth) may
@@ -75,7 +88,7 @@ export class Store {
     // apps get ownerEmail:null -- admin-visible only, same as before this pass existed.
     if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
-    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[]};
+    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
   }
   // Email-based sharing (distinct from the pre-existing label-based single-use invite
@@ -336,6 +349,41 @@ export class Store {
   }
   invite(p,appId,label){const app=this.access(p,appId,true);if(typeof label!=='string'||label.trim().length<2||label.length>50)fail(400,'Enter a colleague’s display name');this.state.invites=this.state.invites.filter(i=>!i.used&&i.expires>Date.now());if(this.state.invites.length>=100)fail(429,'Invite limit reached');const token=randomBytes(32).toString('hex');this.state.invites.push({hash:sha(token),appId,label:label.trim(),expires:Date.now()+3600000,used:false});this.audit(app,'collaborator invitation created',p);this.save();return token;}
   accept(token){const i=this.state.invites.find(i=>i.hash===sha(token||'')&&!i.used&&i.expires>Date.now());if(!i)fail(401,'Invalid or expired access token');const session=this.tokenSession({kind:'collaborator',appId:i.appId,label:i.label});i.used=true;this.save();return session;}
+  // Delete is archive-then-purge, not a single destructive action. archive() is soft and
+  // reversible: it hides the app from list() (unless includeArchived) but changes nothing
+  // else -- config, documents, deployments, everything stays exactly as it was. Mirrors
+  // deploykit's own undeploy(), which marks a row 'removed' rather than deleting it
+  // (backends/docker.py) -- same "tombstone, not erasure" precedent.
+  archive(p,appId){const app=this.access(p,appId,true);if(app.archivedAt)fail(409,'Already archived');app.archivedAt=now();app.archivedBy=p.label;this.audit(app,'archived',p);this.save();return app;}
+  unarchive(p,appId){const app=this.access(p,appId,true);if(!app.archivedAt)fail(409,'Not archived');app.archivedAt=null;app.archivedBy=null;this.audit(app,'unarchived',p);this.save();return app;}
+  // purge() is the actual destructive step, and it only runs on an already-archived app --
+  // archive-then-purge is enforced here, not just a UI convention, so there is no direct path
+  // from "live app" to "gone" without the reversible step in between.
+  //
+  // Cascade order mirrors deploykit's undeploy() (backends/docker.py:603): each step is
+  // independent and best-effort, a failure in one must never skip the rest. Two things pruned
+  // here were previously orphaned by nothing else in the codebase: invites and collaborator
+  // sessions both carry `appId` and were never cleaned up on their own.
+  //
+  // Deliberately does NOT touch config.sourcePath on disk -- for a hand-authored app-tier
+  // record that path can point anywhere (the realpath containment check only ever runs in
+  // the generation path, never in definition()), so only the generation workdir this store
+  // itself created is ours to remove.
+  async purge(p,appId,{force=false}={}){
+    const app=this.access(p,appId,true);
+    if(!app.archivedAt)fail(409,'Archive this application before purging it.');
+    if(app.deployId){
+      if(!force)fail(409,'This application has been deployed. Undeploy it first, or purge with force to remove it anyway.');
+      if(this.runtime){try{await this.runtime.undeploy({artifactId:app.id,payload:{id:app.deployId}});}catch(error){/* best-effort -- purge proceeds either way once forced */}}
+    }
+    this.state.apps=this.state.apps.filter(a=>a.id!==appId);
+    this.state.invites=this.state.invites.filter(i=>i.appId!==appId);
+    this.state.sessions=this.state.sessions.filter(s=>s.appId!==appId);
+    const workdir=join(GENERATED_APPS_DIR||this.dataDir,'generated',appId);
+    try{if(existsSync(workdir))rmSync(workdir,{recursive:true,force:true});}catch(error){/* best-effort */}
+    this.save();
+    return {purged:true,id:appId};
+  }
   view(p,appId){const app=this.access(p,appId);return {...app,documents:app.documents.map(({base64,...doc})=>doc),build:app.build?{...app.build,result:app.build.result?{sourceDigest:app.build.result.sourceDigest,checks:app.build.result.checks}:null}:null,
     // Explicit reshape, not a blind spread — attempts/logs never carry raw model output
     // (source text) today, only issue-string lists and counts, but this is the seam that
