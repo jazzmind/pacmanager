@@ -16,16 +16,30 @@
 <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
 <symbol id="icon-sparkle" viewBox="0 0 24 24"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z"/><path d="M19 15l.8 2.4L22 18l-2.2.6L19 21l-.8-2.4L16 18l2.2-.6L19 15z"/></symbol>
 </defs></svg>
-<section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A workspace for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Workspace access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open workspace ↗</button></form><small>Local demo · Synthetic business data only</small></section>
+<section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A studio for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Studio access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open studio ↗</button></form><small>Local demo · Synthetic business data only</small></section>
 <div id="workspace" hidden>
 <header id="topbar">
-  <button id="crumb-home" class="crumb-home">{{PAC_LOGO_REVERSE_HTML}}<span>Workspace</span></button>
-  <div class="crumb-current" id="crumb-current" hidden><svg class="icon"><use href="#icon-chevron-down" transform="rotate(-90 12 12)"/></svg><select id="crumb-select" aria-label="Switch application"></select></div>
+  <button id="crumb-home" class="crumb-home">{{PAC_LOGO_REVERSE_HTML}}<span>Studio</span></button>
+  <div class="crumb-current" id="crumb-current" hidden>
+    <svg class="icon"><use href="#icon-chevron-down" transform="rotate(-90 12 12)"/></svg>
+    <button id="crumb-toggle" class="crumb-toggle"><span id="crumb-title"></span><svg class="icon"><use href="#icon-chevron-down"/></svg></button>
+    <div id="switcher-popover" class="switcher-popover" hidden>
+      <div class="switcher-list" id="switcher-list"></div>
+      <button id="switcher-new" class="switcher-new"><svg class="icon"><use href="#icon-plus"/></svg>New application</button>
+    </div>
+  </div>
   <div class="topbar-right">
+    <button id="share-btn" hidden><svg class="icon"><use href="#icon-link"/></svg>Share</button>
     <button id="new"><svg class="icon"><use href="#icon-plus"/></svg>New application</button>
     <div class="usermenu">
       <button id="user-toggle" class="usermenu-toggle"><span id="identity"></span><svg class="icon"><use href="#icon-chevron-down"/></svg></button>
       <div id="user-dropdown" class="usermenu-dropdown" hidden>
+        <div id="app-owner-actions" hidden>
+          <p class="dropdown-label" id="app-owner-label"></p>
+          <button id="dd-regenerate" class="danger-item"><svg class="icon"><use href="#icon-undo"/></svg>Regenerate from scratch</button>
+          <button id="dd-delete" class="danger-item"><svg class="icon"><use href="#icon-x"/></svg>Delete</button>
+          <hr class="dropdown-sep">
+        </div>
         <a id="admin-link" href="/admin.html" hidden><svg class="icon"><use href="#icon-settings"/></svg>Admin console</a>
         <button id="connect"><svg class="icon"><use href="#icon-link"/></svg>Connect your AI</button>
         <button id="logout"><svg class="icon"><use href="#icon-logout"/></svg>Sign out</button>
@@ -36,27 +50,31 @@
 <main>
 <div id="empty" class="empty" hidden><svg class="icon hero-icon"><use href="#icon-sparkle"/></svg><h2>An idea deserves a working version.</h2><p>Connect Claude to describe your application, or start with a guided template.<br>Every application gets its own chat, history and release record.</p><button id="start" class="primary">Create your first application ↗</button></div>
 <section id="home" hidden>
-  <div class="home-head"><div><h1>Your workspace</h1><p id="home-summary"></p></div></div>
+  <div class="home-head"><div><h1>Your studio</h1><p id="home-summary"></p></div></div>
   <div class="shelf" id="shelf-mine"><h3>My applications</h3><div class="cards" id="cards-mine"></div></div>
   <div class="shelf" id="shelf-shared" hidden><h3>Shared with me</h3><div class="cards" id="cards-shared"></div></div>
   <div class="shelf" id="shelf-all" hidden><h3>All applications</h3><div class="cards" id="cards-all"></div></div>
 </section>
 <section id="detail" hidden>
+<div class="detail-bar">
+  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button></div>
+  <button id="status" class="badge"></button>
+  <a id="open-preview" target="_blank" rel="noopener">Open<svg class="icon"><use href="#icon-external"/></svg></a>
+</div>
 <div class="workgrid">
   <div class="canvas" id="canvas-view">
-    <div class="browserbar">
-      <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button></div>
-      <span id="status" class="badge"></span>
-      <a id="open-preview" target="_blank" rel="noopener">Open<svg class="icon"><use href="#icon-external"/></svg></a>
-    </div>
     <iframe id="preview" title="Application preview" sandbox=""></iframe>
     <div id="preview-empty"><h2>Your application starts here.</h2><p>Ask for it in the chat, or build the current definition to see a live preview.</p></div>
   </div>
-  <div class="canvas history-view" id="history-view" hidden><div class="browserbar"><span>Release history — select a version to preview it</span><button id="history-rollback" class="ghost" hidden><svg class="icon"><use href="#icon-undo"/></svg>Roll back to this version</button></div><div class="history-body"><div class="release-list" id="release-history-full"></div><iframe id="history-preview" title="Historical release preview" sandbox=""></iframe></div></div>
+  <div class="canvas history-view" id="history-view" hidden>
+    <div class="history-head"><span>Release history — select a version to preview it</span><button id="history-rollback" class="ghost" hidden><svg class="icon"><use href="#icon-undo"/></svg>Roll back to this version</button></div>
+    <div class="history-body"><div class="release-list" id="release-history-full"></div><iframe id="history-preview" title="Historical release preview" sandbox=""></iframe></div>
+  </div>
+  <div class="chat-resize" id="chat-resize" title="Drag to resize · double-click to reset"></div>
   <aside class="chat-panel">
     <div class="chat-cards" id="chat-cards"></div>
     <div class="chat-thread" id="chat-thread"></div>
-    <form id="chat-form" class="chat-form"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-doc"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Describe a change, or leave a note…"></textarea><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></form>
+    <form id="chat-form" class="chat-form"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-doc"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="2" maxlength="2000" placeholder="Describe a change, or leave a note…"></textarea><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></form>
   </aside>
 </div>
 </section>
@@ -68,4 +86,12 @@
   "args":["/absolute/pacmanager/demo/mcp-stdio.js"],
   "env":{"PAC_TOKEN_FILE":"/absolute/pacmanager/.pac-demo/owner.token"}
 }}}</pre><p>Ask your assistant:</p><blockquote>Create a teal claims workbench called “Claims team workspace”. Help adjusters review synthetic claims and share guidance. Build it and inspect the result.</blockquote><p class="hint">The assistant supplies a structured definition using real MCP tools. No model is built into PAC Manager. ChatGPT remote connector authentication is not implemented.</p><button data-close="connection">Done</button></dialog>
-<dialog id="invite-dialog"><h2>Invite a colleague.</h2><p>This one-time invitation grants document and discussion access to this application for 24 hours after acceptance. Open it in another browser profile to demonstrate collaboration.</p><form id="invite-form"><label>Display name<input id="colleague" required minlength="2" maxlength="50"></label><button>Create invitation</button></form><textarea id="invite-url" readonly hidden aria-label="Invitation URL"></textarea><button data-close="invite-dialog" class="subtle">Close</button></dialog><div id="toast" role="status" hidden></div></body></html>
+<dialog id="share-dialog"><div class="graduation-head"><div><p class="eyebrow">WORK BETTER TOGETHER</p><h2>Share this application.</h2></div><button type="button" data-close="share-dialog" class="subtle">Close</button></div>
+<p class="hint">Shared</p><div id="share-list"></div>
+<form id="share-form"><label>Add by email<input id="share-email" type="email" required placeholder="colleague@plymouthrock.com"></label><button>Share</button></form>
+<hr><p class="hint">Or send a one-time link — no account needed. The link itself expires in 1 hour; opening it grants 24 hours of access.</p>
+<form id="invite-form"><label>Display name<input id="colleague" required minlength="2" maxlength="50"></label><button class="ghost">Create link</button></form>
+<textarea id="invite-url" readonly hidden aria-label="Invitation URL"></textarea>
+<div id="invite-list"></div>
+<p class="hint">A shared/deployed app's access check trusts a forwarded identity header rather than an independent login — sound as a UX convenience today, not yet confirmed as a hard security boundary.</p>
+</dialog><div id="toast" role="status" hidden></div></body></html>

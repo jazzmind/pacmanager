@@ -42,12 +42,19 @@ function renderHome(){
   $('shelf-shared').hidden=!shared.length;$('cards-shared').innerHTML=shared.map(cardHtml).join('');
   $('shelf-all').hidden=!extra.length;$('cards-all').innerHTML=extra.map(cardHtml).join('');
 }
+function chipColor(seed){let h=0;for(const c of seed)h=(h*31+c.charCodeAt(0))>>>0;return brandColor(BRAND_ART_TOKENS[h%4],'#0078d6');}
+function renderSwitcher(){
+  $('crumb-title').textContent=app.config.title;
+  $('switcher-list').innerHTML=apps.map(a=>`<button class="switcher-row${a.id===app.id?' active':''}" data-app="${a.id}"><span class="switcher-chip" style="background:${chipColor(a.id)}"></span><span class="switcher-meta"><strong>${esc(a.config.title)}</strong><small>${esc(statusLabel(a))}</small></span></button>`).join('')||'<p class="hint">No other applications yet.</p>';
+}
 function updateCrumb(view){
   $('crumb-current').hidden=view!=='detail';
-  if(view==='detail')$('crumb-select').innerHTML=apps.map(a=>`<option value="${a.id}"${a.id===app.id?' selected':''}>${esc(a.config.title)}</option>`).join('');
+  $('share-btn').hidden=view!=='detail'||me.kind!=='owner';
+  if(view==='detail')$('crumb-title').textContent=app.config.title;
 }
 function showView(v){
   $('empty').hidden=v!=='empty';$('home').hidden=v!=='home';$('detail').hidden=v!=='detail';
+  document.body.dataset.view=v;
   updateCrumb(v);
 }
 
@@ -88,8 +95,6 @@ const RUN={
   build:async()=>{await api('apps/'+app.id+'/build',{});return 'Build started.';},
   publish:async()=>{await api('apps/'+app.id+'/publish',{});published=true;return 'Published.';},
   bind:async()=>{await api('apps/'+app.id+'/binding',{});return 'Mock claims service bound.';},
-  invite:async()=>{$('invite-url').hidden=true;$('invite-form').hidden=false;$('invite-dialog').showModal();return null;},
-  graduate:async()=>{await graduation.open();return null;},
   regenerate:async()=>{
     if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return null;
     await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
@@ -118,18 +123,12 @@ function proposals(){
   }else if(app.build?.status!=='ready'||app.build.revision!==app.revision){
     cards.push({tone:'action',title:'Build this app',body:'Compiles the current definition and runs the safety checks required before preview or publish.',actions:[{label:'Build application',run:'build'}]});
   }else if(!app.release||app.release.revision!==app.build.revision){
+    // No redundant "Published · vN" info card once there's nothing left to do -- the status
+    // badge in the detail bar already says that, and clicking it opens the publish/promote
+    // modal. A card only appears here while there's a genuine next action to take.
     cards.push({tone:'primary',title:'Ready to publish',body:`Build passed ${passed}/${checks.length} checks${app.build.result?.sourceDigest?' ('+app.build.result.sourceDigest.slice(0,10)+')':''} and hasn't been released yet. Publishing makes it v${nextRelease} — the version your team sees.`,actions:[{label:'Publish as v'+nextRelease,run:'publish'}]});
-  }else{
-    cards.push({tone:'ok',title:'Published · v'+app.release.number,body:`Live since ${new Date(app.release.publishedAt).toLocaleString()}. ${app.revision!==app.release.revision?'The draft has unpublished changes.':'The draft matches the published release.'}`});
   }
-  if(isOwner){
-    if(!app.binding)cards.push({tone:'action',title:'Bind mock claims',body:'Grants access to synthetic claims data for testing. No live service.',actions:[{label:'Bind mock claims',run:'bind'}]});
-    cards.push({tone:'action',title:'Invite a colleague',body:'A one-time link, valid 24 hours, scoped to this application.',actions:[{label:'Create invitation',run:'invite'}]});
-    if(app.release)cards.push({tone:'action',title:'Download graduation package',body:'The published app, source, documents and build evidence.',actions:[{label:'Download',href:'/api/apps/'+app.id+'/export'}]});
-    cards.push({tone:'action',title:'Graduate',body:'Governance docs (ARB, readiness, BOM) and an optional review-then-publish to GitHub. Nothing sends without your confirmation.',actions:[{label:'Open graduation',run:'graduate'}]});
-    if(hasSource)cards.push({tone:'danger',title:'Regenerate from scratch',body:'Discards the current source and starts over from the brief. Cannot be undone — though any already-published release can still be rolled back to.',actions:[{label:'Regenerate from scratch',run:'regenerate'}]});
-    cards.push({tone:'danger',title:'Delete',body:'Archives it — reversible, hides it from your list. An admin can restore or permanently purge it later.',actions:[{label:'Delete',run:'delete'}]});
-  }
+  if(isOwner&&!app.binding)cards.push({tone:'action',title:'Bind mock claims',body:'Grants access to synthetic claims data for testing. No live service.',actions:[{label:'Bind mock claims',run:'bind'}]});
   return cards;
 }
 function renderCards(){
@@ -169,6 +168,8 @@ function draw(){
   const isLive=app.generation?.status==='generating'||app.build?.status==='building';
   $('status').textContent=app.generation?.status==='generating'?'Generating…':app.build?.status==='building'?'Building…':app.release?'Published · v'+app.release.number:app.build?.status==='ready'?'Preview ready':'Draft';
   $('status').classList.toggle('live',isLive);
+  $('app-owner-actions').hidden=me.kind!=='owner';$('app-owner-label').textContent=app.config.title;
+  renderSwitcher();
   // Once generation lands, build automatically -- describing a brief should produce a working
   // preview in one motion. Guarded by revision so it only fires once per successful generation.
   if(app.generation?.status==='ready'&&app.generation.revision===app.revision&&autoBuiltRevision[app.id]!==app.revision&&app.build?.status!=='building'){
@@ -207,11 +208,46 @@ $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showMod
 $('kind').onchange=updateKindGuidance;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 $('crumb-home').onclick=action(async()=>{selected=null;history.replaceState(null,'','/');await refresh();});
-$('crumb-select').onchange=action(async()=>{selected=$('crumb-select').value;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
-const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;history.replaceState(null,'','/?app='+selected);await refresh();});
-$('home').onclick=openApp;
+const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
+$('home').onclick=openApp;$('switcher-list').onclick=openApp;
+$('crumb-toggle').onclick=e=>{e.stopPropagation();renderSwitcher();$('switcher-popover').hidden=!$('switcher-popover').hidden;};
+$('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;editor(false);};
 $('user-toggle').onclick=e=>{e.stopPropagation();$('user-dropdown').hidden=!$('user-dropdown').hidden;};
-document.addEventListener('click',()=>{$('user-dropdown').hidden=true;});
+document.addEventListener('click',()=>{$('user-dropdown').hidden=true;$('switcher-popover').hidden=true;});
+$('dd-regenerate').onclick=action(async()=>{$('user-dropdown').hidden=true;const message=await RUN.regenerate();await refresh();if(message)toast(message);});
+$('dd-delete').onclick=action(async()=>{$('user-dropdown').hidden=true;const message=await RUN.delete();await refresh();if(message)toast(message);});
+$('status').onclick=()=>graduation.open();
+// Resizable chat width -- persisted so it isn't re-dragged every session. Clamped so the
+// preview canvas can never be squeezed unusably narrow or the chat too narrow to type in.
+(function(){
+  const grid=document.querySelector('.workgrid'),handle=$('chat-resize');
+  const saved=localStorage.getItem('pac-chat-w');if(saved)grid.style.setProperty('--chat-w',saved+'px');
+  let dragging=false;
+  handle.addEventListener('mousedown',e=>{dragging=true;e.preventDefault();});
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const w=Math.max(320,Math.min(720,grid.getBoundingClientRect().right-e.clientX));
+    grid.style.setProperty('--chat-w',w+'px');
+  });
+  window.addEventListener('mouseup',()=>{if(!dragging)return;dragging=false;localStorage.setItem('pac-chat-w',parseInt(getComputedStyle(grid).getPropertyValue('--chat-w')));});
+  handle.addEventListener('dblclick',()=>{grid.style.removeProperty('--chat-w');localStorage.removeItem('pac-chat-w');});
+})();
+// Share modal: collaborators (add/remove by email) plus the pre-existing one-time invite
+// link flow, now with pending invites actually listed (GET /api/apps/:id/invites) instead
+// of being created into a void with no way to see what's already outstanding.
+async function refreshInviteList(){
+  const invites=await api('apps/'+app.id+'/invites');
+  $('invite-list').innerHTML=invites.map(i=>`<div class="thread-item"><span class="thread-text">${esc(i.label)}</span><span class="thread-meta">link expires ${new Date(i.expires).toLocaleTimeString()}</span></div>`).join('');
+}
+async function openShare(){
+  $('share-list').innerHTML=(app.sharedWith||[]).map(email=>`<div class="thread-item"><span class="thread-text">${esc(email)}</span><button data-unshare="${esc(email)}" class="subtle">Remove</button></div>`).join('')||'<p class="hint">Nobody yet.</p>';
+  await refreshInviteList();
+  $('invite-url').hidden=true;
+  $('share-dialog').showModal();
+}
+$('share-btn').onclick=action(openShare);
+$('share-list').onclick=action(async e=>{const b=e.target.closest('[data-unshare]');if(!b)return;await api('apps/'+app.id+'/unshare',{email:b.dataset.unshare});await refresh();await openShare();});
+$('share-form').onsubmit=action(async()=>{await api('apps/'+app.id+'/share',{email:$('share-email').value});$('share-email').value='';await refresh();await openShare();});
 $('definition-form').onsubmit=action(async()=>{
   const legacy=editing&&!app.config.kind;
   const base={title:$('app-title').value,brief:$('brief').value,accent:$('accent').value};
@@ -254,8 +290,8 @@ $('chat-form').onsubmit=action(async()=>{
   else await api('apps/'+app.id+'/comments',{text});
   await refresh();
 });
-$('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id+'/invite',{label:$('colleague').value});$('invite-url').value=result.url;$('invite-url').hidden=false;$('invite-form').hidden=true;$('invite-url').select();});
+$('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id+'/invite',{label:$('colleague').value});$('invite-url').value=result.url;$('invite-url').hidden=false;$('colleague').value='';$('invite-url').select();await refreshInviteList();});
 const invitation=new URLSearchParams(location.hash.slice(1)).get('invite');if(invitation){history.replaceState(null,'',location.pathname+location.search);try{await api('session',{token:invitation});}catch(error){toast(error.message);}}
 try{await enter();}catch{/* Login is shown until authenticated. */}
-graduation=initGraduation({api,action,$,getApp:()=>app,getMe:()=>me,toast,esc});
+graduation=initGraduation({api,action,$,getApp:()=>app,getMe:()=>me,toast,esc,refresh});
 setInterval(()=>{if(me&&!document.hidden)refresh().catch(error=>toast(error.message));},2000);

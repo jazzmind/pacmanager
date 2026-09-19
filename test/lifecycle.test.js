@@ -51,6 +51,28 @@ test('LIFECYCLE-003 purge refuses on a non-archived app', async t => {
   await assert.rejects(() => store.purge(owner, app.id), /Archive this application before purging/);
 });
 
+test('LIFECYCLE-010 listInvites reports pending, unused, unexpired invites for the app and never exposes the hash', async t => {
+  const store = storeFixture(t);
+  const app = store.create(owner, staticConfig);
+  const other = store.create(owner, { ...staticConfig, title: 'Other App' });
+  const token = store.invite(owner, app.id, 'Colleague');
+  store.invite(owner, other.id, 'Someone else\'s invite'); // must not leak across apps
+  const usedToken = store.invite(owner, app.id, 'Already accepted');
+  store.accept(usedToken); // used invites must not be listed
+
+  const invites = store.listInvites(owner, app.id);
+  assert.equal(invites.length, 1);
+  assert.equal(invites[0].label, 'Colleague');
+  assert.ok(invites[0].expires > Date.now());
+  assert.ok(!('hash' in invites[0]));
+  assert.ok(!JSON.stringify(invites).includes(store.state.invites.find(i => i.appId === app.id && !i.used).hash));
+
+  // Sanity: the token from the still-pending invite is genuinely usable (proves listInvites
+  // isn't accidentally filtering out the real thing).
+  const sessionToken = store.accept(token);
+  assert.equal(store.session(sessionToken).appId, app.id);
+});
+
 test('LIFECYCLE-004 purge removes the app record, its invites and its collaborator sessions', async t => {
   const store = storeFixture(t);
   const app = store.create(owner, staticConfig);
