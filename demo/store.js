@@ -5,6 +5,7 @@ import { definition,sha,compile,serviceCatalog,sourceIssues,SOURCE_LIMITS,FORBID
 import { graduationFiles } from './archive.js';
 import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
 import { deriveEnvRefs } from './capabilities.js';
+import { deriveGraduationResources } from './services.js';
 
 const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
 const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATTEMPTS||3));
@@ -403,7 +404,12 @@ export class Store {
     // package.json if one was already generated; for app-tier releases there isn't one yet, so
     // it starts from an empty file map.
     const files=app.config.tier==='app'?{}:graduationFiles(app,{includeData:false});
-    const result=await adapter({...files},{artifactId:app.id,releaseDigest:app.release.result.sourceDigest,principalId:p.label},options);
+    // Derive resource references from the app's own envRefs + the catalog's prod.resourceType,
+    // so a devops-platform workload.yml carries real resource refs by default -- an explicit
+    // options.resources (a caller who wants to name resources differently) still wins.
+    const derivedResources=deriveGraduationResources(app.config.envRefs,serviceCatalog,app.id);
+    const graduateOptions={...options,resources:{...derivedResources,...options.resources}};
+    const result=await adapter({...files},{artifactId:app.id,releaseDigest:app.release.result.sourceDigest,principalId:p.label},graduateOptions);
     const output=this.unwrap(result);
     const auditNote=blockers.length?`graduation prepared via adapter ${adapterName} (allowLocalOnly: ${blockers.map(b=>b.envVar+'='+b.kind).join(', ')})`:'graduation prepared via adapter '+adapterName;
     this.audit(app,auditNote,p);this.save();
