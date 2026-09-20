@@ -42,6 +42,11 @@ Start with [product](docs/product.md), [architecture](docs/architecture.md), [th
 ## Repository map
 - `src/`: dependency-free contract, policy, planner and CLI reference core.
 - `demo/`: runnable workspace, MCP bridge, trusted builder and standalone export.
+- `adapters/`: concrete, generic (no insurer-specific content) adapter implementations, as sibling
+  packages with their own isolated dependencies: `authoring` (LLM-driven generation),
+  `orchestration/temporal`, and `runtime/docker` + `runtime/docker-engine` (a Docker/nginx/
+  Postgres/DynamoDB deploy engine, vendored 2026-09-20 from the former standalone deploykit repo).
+  Reference implementations, not required by `src/`, which stays adapter-agnostic.
 - `test/`: independent executable acceptance tests.
 - `specs/`: living specifications with stable requirement IDs.
 - `docs/`: product, architecture, decisions, operations and integration contracts.
@@ -51,4 +56,4 @@ Start with [product](docs/product.md), [architecture](docs/architecture.md), [th
 - `.specguard/`: opt-in QA configuration; no automatic healing.
 
 ## Contributions
-Useful first contributions include schema/validator parity, a mock capability provider, a constrained runtime adapter, permission-aware knowledge APIs and tested export/import round trips. See [CONTRIBUTING](CONTRIBUTING.md). Maintainers retain authority over security policy and releases.
+Useful first contributions include schema/validator parity, a mock capability provider, a second runtime adapter backend (a Docker-based one already ships in `adapters/runtime/docker-engine` — a Kubernetes/EKS backend implementing the same `DeployBackend` interface is a natural next one), permission-aware knowledge APIs and tested export/import round trips. See [CONTRIBUTING](CONTRIBUTING.md). Maintainers retain authority over security policy and releases.

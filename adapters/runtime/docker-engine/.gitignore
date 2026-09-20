@@ -1,0 +1,10 @@
+.sandbox
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+.pytest_cache/
+.captured/

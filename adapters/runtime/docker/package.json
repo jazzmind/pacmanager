@@ -1,0 +1,11 @@
+{
+  "name": "pacmanager-runtime-docker-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "pacmanager runtime adapter: a REST + SSE client for the docker-engine control plane (see ../docker-engine, vendored from the former standalone deploykit repo). Moved from pracman/adapters/runtime/deploykit 2026-09-20 -- generic, no Plymouth-Rock-specific content.",
+  "type": "module",
+  "main": "cli.js",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

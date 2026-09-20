@@ -1,0 +1,14 @@
+{
+  "name": "pracman-orchestration-temporal-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "pacmanager orchestration adapter for Temporal (admin console health/listWorkflows)",
+  "type": "module",
+  "main": "cli.js",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@temporalio/client": "^1.24.0"
+  }
+}

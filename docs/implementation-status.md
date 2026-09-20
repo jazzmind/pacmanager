@@ -1,5 +1,12 @@
 # Verification record
 
+> **Note (2026-09-20):** this document's historical entries below reference `pracman/adapters/
+> authoring/`, `pracman/adapters/runtime/deploykit/`, and `pracman/adapters/orchestration/
+> temporal/`. Those three moved to `adapters/authoring/`, `adapters/runtime/docker/`, and
+> `adapters/orchestration/temporal/` in *this* repo on 2026-09-20 (see `pracman/docs/
+> architecture.md`) — left unedited below as an accurate record of what was true when each
+> entry was written, not a current-state reference.
+
 ## Remaining tasks
 
 Broken out in detail because "done" claims above are easy to skim past the gaps. Each item
