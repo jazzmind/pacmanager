@@ -110,3 +110,21 @@ test('SVC-005 the assurance dossier surfaces service bindings with their project
   assert.match(bindings[0].caveat, /PAC_SERVICE_CATALOG/);
   server.close();
 });
+
+test('SVC-006 graduateApplication derives resources from envRefs and the catalog, merged with any options-provided resources', async t => {
+  const received = [];
+  const graduationAdapters = new Map([['devops-platform', (files, context, options) => { received.push(options); return Promise.resolve({ status: 'ok', output: { files } }); }]]);
+  // The OSS default catalog's "postgres" kind has prod.resourceType: null (local-only, no
+  // real production resource type) -- so its derived resources entry is correctly empty.
+  // Proves the wiring runs end to end without crashing on a kind that has nothing to
+  // reference, not that a non-empty derivation exists (that needs a native/substituted
+  // kind, which the OSS default catalog deliberately doesn't ship -- see
+  // pracman/services/catalog.json for a real one).
+  const { server, call, base, appId } = await appWithEnvRefs(t, 'f', graduationAdapters, { DATABASE_URL: 'postgres' });
+  const res = await call(base, `/api/apps/${appId}/graduate`, { adapter: 'devops-platform', target: 'cloudfront', allowLocalOnly: true, resources: { secret: ['hand-supplied'] } });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.equal(received.length, 1);
+  // The derived (empty) resources and the caller-supplied "secret" entry both survive the merge.
+  assert.deepEqual(received[0].resources, { secret: ['hand-supplied'] });
+  server.close();
+});

@@ -86,3 +86,39 @@ export function loadCatalog(catalogPath = process.env.PAC_SERVICE_CATALOG) {
     },
   };
 }
+
+/**
+ * Derive a graduation adapter's `resources` payload ({resourceType: [refNames]}) from an
+ * app's envRefs and this catalog -- the missing wiring: pracman's devops-platform adapter's
+ * generateWorkload() has always accepted a `resources` map, but nothing ever populated it,
+ * so a graduated app's workload.yml carried zero resource references regardless of what the
+ * app actually declared (see pracman/adapters/graduation/devops-platform/lib/workload.js's
+ * referenceResources() -- the platform's "reference by name, never define inline" shape).
+ *
+ * Skips any kind whose catalog entry has no `prod.resourceType` (a local-only binding, e.g.
+ * mock-api) -- those are graduation blockers already, surfaced separately by
+ * graduationBlockers(). If a caller passed allowLocalOnly to get past that gate, there is
+ * still no real production resource to reference, so it's correctly omitted here rather than
+ * emitted as a reference to something that doesn't exist.
+ *
+ * `refName` is deterministic (`<appId>-<kind>`), not caller-supplied -- devops-platform
+ * resolves resources by name against ones that already exist in the target account, so this
+ * name must match whatever the real resource was actually named at provisioning time. That
+ * match is a graduation-review-time human responsibility (documented in each kind's own
+ * `prod.caveat`), not something this function can verify.
+ *
+ * Two envRefs naming the same kind (e.g. two env vars both bound to `pgvector`) collapse to
+ * one reference, matching appspec.js's own treatment of the same case -- they're the same
+ * underlying physical resource, not two.
+ */
+export function deriveGraduationResources(envRefs, catalog, appId) {
+  const resources = {};
+  for (const kind of new Set(Object.values(envRefs || {}))) {
+    const svc = catalog.service(kind);
+    const resourceType = svc?.prod?.resourceType;
+    if (!resourceType) continue;
+    const refName = `${appId}-${kind}`;
+    (resources[resourceType] ||= []).push(refName);
+  }
+  return resources;
+}
