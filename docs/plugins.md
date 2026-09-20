@@ -15,8 +15,8 @@ Types:
   above, despite the pre-rename name collision. Two operations: `generate` (a real, possibly
   slow model call) and `probe` (a cheap reachability check for `GET /api/me`'s cached
   availability state). See `src/adapters.js`'s `AUTHORING_CAPABILITY`/`AUTHORING_KINDS` and
-  `pracman/adapters/authoring/` for the reference implementation (LiteLLM + a direct-key
-  fallback).
+  `adapters/authoring/` (this repo, moved in from pracman 2026-09-20) for the reference
+  implementation (LiteLLM + a direct-key fallback).
 - Artifact pack: template source, PAC contract, tests, migration and export rules.
 - Capability provider: versioned OpenAPI/JSON Schema interface, mock fixtures and live adapter.
 - Runtime adapter: reconcile release, inspect health, stop, revoke and destroy.

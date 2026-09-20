@@ -63,7 +63,7 @@ test('GENSRV-003 POST /api/apps/:id/generate runs a real generation through the 
 
 test('GENSRV-006 the full describe -> generate -> build -> preview chain (what ui.js drives automatically) produces a real, working preview -- not a template with the title pasted in',async t=>{
   // index.html is a fragment, not a full document -- compileStatic() auto-wraps .js/.css into
-  // one <script>/<style> block each (see pracman/adapters/authoring/lib/prompt.js's
+  // one <script>/<style> block each (see adapters/authoring/lib/prompt.js's
   // STATIC_ASSEMBLY_NOTE, which tells a real model the same thing).
   const authoring=fakeAuthoring([{status:'ok',output:{kind:'interactive',model:'claude-sonnet-5',source:{'index.html':'<h1>Tapper</h1>','app.js':'window.PAC_GAME_MARKER=true;'}}}]);
   const {runtime,call,base,ownerToken}=await fixture(t,authoring);

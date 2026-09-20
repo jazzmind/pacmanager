@@ -1,0 +1,11 @@
+{
+  "name": "pacmanager-authoring-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "pacmanager authoring adapter: generates real application source via a LiteLLM-compatible proxy (litellm first, direct Anthropic/OpenAI fallback). Moved from pracman/adapters/authoring 2026-09-20 -- generic, no Plymouth-Rock-specific content (only the LITELLM_URL/KEY env var names and the default model alias, both configured at the call site).",
+  "type": "module",
+  "main": "cli.js",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

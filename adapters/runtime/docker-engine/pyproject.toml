@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deploykit"
+version = "0.1.0"
+description = "Standalone sandboxed-app deployment library: Docker backend, nginx routing, SSH enrollment, MCP agent interface"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "paramiko>=3.4",
+    "typer[all]>=0.12",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "anyio>=4.4",
+    "sse-starlette>=2.1",
+    "aiosqlite>=0.20",
+    "filelock>=3.15",
+    "rich>=13",
+    "psycopg2-binary>=2.9",
+    "boto3>=1.34",
+]
+
+[project.optional-dependencies]
+# mcp/tui extras dropped 2026-09-20 when vendoring this engine out of the standalone
+# deploykit repo -- agent/mcp_server.py and tui/ weren't carried over (see this
+# package's git history / commit message for why: MCP wraps a module not vendored here,
+# and the TUI is an operator convenience neither pacmanager nor pracman's own deploy
+# path exercises). manage() in cli/main.py already degrades gracefully if invoked
+# without the (now nonexistent) tui extra installed.
+jwt = ["python-jose[cryptography]>=3.3", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]
+
+[project.scripts]
+deploykit = "deploykit.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deploykit"]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
