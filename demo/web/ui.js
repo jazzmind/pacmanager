@@ -3,6 +3,26 @@ import { CAPABILITIES,CAPABILITY_GROUPS,USE_CASES,SENSITIVE_DATA_NOTICE,deriveKi
 const $=id=>document.getElementById(id);
 let me,app,apps=[],selected=new URLSearchParams(location.search).get('app'),published=new URLSearchParams(location.search).get('published')==='1',previewKey='',historyOpen=false,selectedRelease=null,currentCards=[],chatMode='chat',currentPlan=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Minimal markdown for LLM-written text (chat answers, drafted plans) -- escapes first so every
+// transform below only ever wraps already-safe text in tags; nothing from the model can inject
+// markup. No dependency pulled in for this on purpose (this demo ships with zero npm deps).
+function renderMarkdown(text){
+  // Fenced code blocks are pulled out into an ASCII placeholder (not a control character --
+  // literal NULs make the whole file look like binary data to `file`/grep) and restored last,
+  // so nothing inside them gets touched by the inline/list/paragraph passes below.
+  const blocks=[];
+  let html=esc(text).replace(/```([\s\S]*?)```/g,(m,code)=>{blocks.push(`<pre><code>${code.trim()}</code></pre>`);return `@@PACBLOCK${blocks.length-1}@@`;});
+  html=html.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  html=html.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+  html=html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g,'<em>$1</em>');
+  html=html.replace(/(^|\n)((?:[-*] .+(?:\n|$))+)/g,(m,pre,block)=>pre+'<ul>'+block.trim().split('\n').map(l=>`<li>${l.replace(/^[-*]\s+/,'')}</li>`).join('')+'</ul>');
+  html=html.replace(/(^|\n)((?:\d+\. .+(?:\n|$))+)/g,(m,pre,block)=>pre+'<ol>'+block.trim().split('\n').map(l=>`<li>${l.replace(/^\d+\.\s+/,'')}</li>`).join('')+'</ol>');
+  return html.split(/\n{2,}/).map(block=>{
+    const t=block.trim();
+    if(/^<(ul|ol)>/.test(t)||/^@@PACBLOCK\d+@@$/.test(t))return t;
+    return `<p>${t.replace(/\n/g,'<br>')}</p>`;
+  }).join('').replace(/@@PACBLOCK(\d+)@@/g,(m,i)=>blocks[Number(i)]);
+}
 
 // Deterministic inline-SVG card art (data: URI -- the preview CSP is img-src 'self' data:, no
 // hotlinking allowed, and deploykit's webUI already learned that the hard way). Colors are read
@@ -147,33 +167,37 @@ function proposals(){
   }
   return cards;
 }
+// Cards and thread are both mode-aware now -- switching Chat/Plan/Notes/Log actually changes
+// what's shown, instead of the tab bar just re-styling itself over identical content underneath.
 function renderCards(){
-  currentCards=proposals();
+  const showCards=chatMode==='chat'||chatMode==='plan';
+  currentCards=showCards?proposals():[];
   // A drafted-but-not-yet-executed plan sits above the usual proposals, since it's the one
   // thing actively waiting on a decision -- keep amending it via more Plan-tab messages, or
   // execute/discard it. Executing calls the exact same revise path as a direct change request.
-  if(currentPlan)currentCards=[{tone:'primary',title:'Proposed plan',body:currentPlan.text,actions:[{label:'Execute this plan',run:'executePlan'},{label:'Discard',run:'discardPlan'}]},...currentCards];
-  $('chat-cards').innerHTML=currentCards.map((c,ci)=>`<div class="chat-card tone-${c.tone}${c.busy?' busy':''}"><strong>${esc(c.title)}</strong><p>${esc(c.body)}</p>${(c.actions||[]).map((a,ai)=>a.href?`<a class="button" href="${a.href}">${esc(a.label)}</a>`:`<button data-card="${ci}" data-action="${ai}">${esc(a.label)}</button>`).join('')}</div>`).join('');
+  // Only shown on the Plan tab -- it's the thing that tab exists to resolve.
+  if(chatMode==='plan'&&currentPlan)currentCards=[{tone:'primary',title:'Proposed plan',body:currentPlan.text,actions:[{label:'Execute this plan',run:'executePlan'},{label:'Discard',run:'discardPlan'}]},...currentCards];
+  $('chat-cards').hidden=!showCards;
+  $('chat-cards').innerHTML=currentCards.map((c,ci)=>`<div class="chat-card tone-${c.tone}${c.busy?' busy':''}"><strong>${esc(c.title)}</strong><div class="chat-card-body">${renderMarkdown(c.body)}</div>${(c.actions||[]).map((a,ai)=>a.href?`<a class="button" href="${a.href}">${esc(a.label)}</a>`:`<button data-card="${ci}" data-action="${ai}">${esc(a.label)}</button>`).join('')}</div>`).join('');
 }
-// The thread merges audit[] (system events -- created, published, rolled back, document
-// uploaded...) with comments[] (human notes) into one chronological record. Both already
-// existed in the API response; audit[] specifically was fetched every 2s and never shown.
+const EMPTY_THREAD_MESSAGE={chat:'No questions asked yet. Ask one below.',plan:'No changes planned yet. Describe one below to get a draft plan.',notes:'No notes yet. Leave one below.',log:'No generation, build or activity events yet.'};
+// The thread now shows only what belongs to the selected tab: Chat/Plan each show their own
+// half of chatLog[] (paired question/answer, same timestamp so Array.sort's stability keeps
+// them adjacent); Notes shows comments[]; Log shows audit[] plus raw generation/build log
+// lines -- previously all four were merged into one undifferentiated feed regardless of tab.
 function renderThread(){
-  const events=[
-    ...(app.audit||[]).map(e=>({at:e.at,kind:'audit',text:e.event,actor:e.actor})),
-    ...(app.comments||[]).map(c=>({at:c.createdAt,kind:'note',text:c.text,actor:c.author})),
-    // Raw generation/build log lines (including failure reasons and the model that ran) --
-    // previously shown in a details block that this redesign removed; folded into the same
-    // thread rather than dropped, which is also where proposals()'s "see the log below" points.
-    ...(app.generation?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:app.generation.model||null})),
-    ...(app.build?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:null})),
-    // Chat/Plan exchanges -- each becomes two consecutive entries (question then answer) at
-    // the same timestamp; Array.sort is stable, so pairing order survives the sort below.
-    ...(app.chatLog||[]).flatMap(c=>[{at:c.at,kind:'chatlog-q',text:c.message,actor:c.author},{at:c.at,kind:'chatlog-a',text:c.reply,actor:c.mode==='plan'?'Proposed plan':'Answer'}]),
-  ].sort((a,b)=>new Date(a.at)-new Date(b.at));
+  const events=
+    chatMode==='log'?[
+      ...(app.audit||[]).map(e=>({at:e.at,kind:'audit',text:e.event,actor:e.actor})),
+      ...(app.generation?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:app.generation.model||null})),
+      ...(app.build?.logs||[]).map(l=>({at:l.at,kind:'log',text:l.text,actor:null})),
+    ]
+    :chatMode==='notes'?(app.comments||[]).map(c=>({at:c.createdAt,kind:'note',text:c.text,actor:c.author}))
+    :(app.chatLog||[]).filter(c=>c.mode===chatMode).flatMap(c=>[{at:c.at,kind:'chatlog-q',text:c.message,actor:c.author},{at:c.at,kind:'chatlog-a',text:c.reply,actor:c.mode==='plan'?'Proposed plan':'Answer'}]);
+  events.sort((a,b)=>new Date(a.at)-new Date(b.at));
   const thread=$('chat-thread');
   const wasAtBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<40;
-  thread.innerHTML=events.map(e=>`<div class="thread-item thread-${e.kind}"><span class="thread-text">${esc(e.text)}</span><span class="thread-meta">${esc(e.actor||'')} · ${new Date(e.at).toLocaleString()}</span></div>`).join('')||'<p class="hint">No activity yet. Ask for a change below to get started.</p>';
+  thread.innerHTML=events.map(e=>`<div class="thread-item thread-${e.kind}"><span class="thread-text">${e.kind==='chatlog-a'?renderMarkdown(e.text):esc(e.text)}</span><span class="thread-meta">${esc(e.actor||'')} · ${new Date(e.at).toLocaleString()}</span></div>`).join('')||`<p class="hint">${esc(EMPTY_THREAD_MESSAGE[chatMode])}</p>`;
   if(wasAtBottom)thread.scrollTop=thread.scrollHeight;
 }
 const autoBuiltRevision={};
@@ -244,18 +268,31 @@ $('dd-delete').onclick=action(async()=>{$('user-dropdown').hidden=true;const mes
 $('status').onclick=()=>graduation.open();
 // Resizable chat width -- persisted so it isn't re-dragged every session. Clamped so the
 // preview canvas can never be squeezed unusably narrow or the chat too narrow to type in.
+// The expand button is a one-click jump to a wide preset for reading/writing long plans; it
+// clears itself the moment the user drags the handle by hand, since that's a more specific
+// intent than the preset.
+const CHAT_WIDE_PX=680;
+let chatExpanded=false;
 (function(){
-  const grid=document.querySelector('.workgrid'),handle=$('chat-resize');
-  const saved=localStorage.getItem('pac-chat-w');if(saved)grid.style.setProperty('--chat-w',saved+'px');
+  const grid=document.querySelector('.workgrid'),handle=$('chat-resize'),expandBtn=$('chat-expand');
+  const savedWidth=()=>{const saved=localStorage.getItem('pac-chat-w');return saved?saved+'px':null;};
+  const applyWidth=()=>{
+    const w=chatExpanded?CHAT_WIDE_PX+'px':savedWidth();
+    if(w)grid.style.setProperty('--chat-w',w);else grid.style.removeProperty('--chat-w');
+    expandBtn.classList.toggle('expanded',chatExpanded);
+    expandBtn.title=chatExpanded?'Shrink chat width':'Expand chat width';
+  };
+  applyWidth();
   let dragging=false;
-  handle.addEventListener('mousedown',e=>{dragging=true;e.preventDefault();});
+  handle.addEventListener('mousedown',e=>{dragging=true;chatExpanded=false;e.preventDefault();});
   window.addEventListener('mousemove',e=>{
     if(!dragging)return;
     const w=Math.max(320,Math.min(720,grid.getBoundingClientRect().right-e.clientX));
     grid.style.setProperty('--chat-w',w+'px');
   });
-  window.addEventListener('mouseup',()=>{if(!dragging)return;dragging=false;localStorage.setItem('pac-chat-w',parseInt(getComputedStyle(grid).getPropertyValue('--chat-w')));});
-  handle.addEventListener('dblclick',()=>{grid.style.removeProperty('--chat-w');localStorage.removeItem('pac-chat-w');});
+  window.addEventListener('mouseup',()=>{if(!dragging)return;dragging=false;localStorage.setItem('pac-chat-w',parseInt(getComputedStyle(grid).getPropertyValue('--chat-w')));expandBtn.classList.toggle('expanded',false);});
+  handle.addEventListener('dblclick',()=>{chatExpanded=false;grid.style.removeProperty('--chat-w');localStorage.removeItem('pac-chat-w');applyWidth();});
+  expandBtn.addEventListener('click',()=>{chatExpanded=!chatExpanded;applyWidth();});
 })();
 // Share modal: collaborators (add/remove by email) plus the pre-existing one-time invite
 // link flow, now with pending invites actually listed (GET /api/apps/:id/invites) instead
@@ -312,11 +349,17 @@ const CHAT_MODE_PLACEHOLDER={chat:'Ask a question about this app…',plan:'Descr
 function setChatMode(mode){
   chatMode=mode;
   document.querySelectorAll('#chat-modes [data-mode]').forEach(b=>b.classList.toggle('selected',b.dataset.mode===mode));
-  $('chat-input').placeholder=CHAT_MODE_PLACEHOLDER[mode];
+  // Log is read-only history -- there's nothing to compose into it, so the form hides rather
+  // than accepting input that would go nowhere.
+  $('chat-form').hidden=mode==='log';
+  if(mode!=='log')$('chat-input').placeholder=CHAT_MODE_PLACEHOLDER[mode];
 }
-$('chat-modes').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;setChatMode(b.dataset.mode);};
+// Switching tabs must actually change what's on screen, not just which tab looks selected --
+// re-run the same two render functions draw() already calls after every poll.
+$('chat-modes').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;setChatMode(b.dataset.mode);renderCards();renderThread();};
 $('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('chat-form').requestSubmit();}});
 $('chat-form').onsubmit=action(async()=>{
+  if(chatMode==='log')return; // the form is hidden on this tab; guard in case it's ever reachable
   const text=$('chat-input').value.trim();if(!text)return;
   $('chat-input').value='';
   // Notes = the old plain-comment behavior. Chat/Plan never touch the app themselves --

@@ -15,6 +15,7 @@
 <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
 <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
 <symbol id="icon-sparkle" viewBox="0 0 24 24"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z"/><path d="M19 15l.8 2.4L22 18l-2.2.6L19 21l-.8-2.4L16 18l2.2-.6L19 15z"/></symbol>
+<symbol id="icon-expand" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></symbol>
 </defs></svg>
 <section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A studio for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Studio access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open studio ↗</button></form><small>Local demo · Synthetic business data only</small></section>
 <div id="workspace" hidden>
@@ -73,7 +74,10 @@
   <div class="chat-resize" id="chat-resize" title="Drag to resize · double-click to reset"></div>
   <aside class="chat-panel">
     <div class="chat-cards" id="chat-cards"></div>
-    <div class="chat-modes" id="chat-modes"><button type="button" data-mode="chat" class="selected">Chat</button><button type="button" data-mode="plan">Plan</button><button type="button" data-mode="notes">Notes</button></div>
+    <div class="chat-modes-row">
+      <div class="chat-modes" id="chat-modes"><button type="button" data-mode="chat" class="selected">Chat</button><button type="button" data-mode="plan">Plan</button><button type="button" data-mode="notes">Notes</button><button type="button" data-mode="log">Log</button></div>
+      <button type="button" id="chat-expand" class="chat-expand-btn" title="Expand chat width" aria-label="Expand chat width"><svg class="icon"><use href="#icon-expand"/></svg></button>
+    </div>
     <div class="chat-thread" id="chat-thread"></div>
     <form id="chat-form" class="chat-form"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-doc"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="2" maxlength="2000" placeholder="Ask a question about this app…"></textarea><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></form>
   </aside>
