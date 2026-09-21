@@ -32,7 +32,11 @@ from ..proxy.nginx import NginxProxy
 from ..store import DeploymentStore
 from .base import DeployBackend
 
-CONTAINER_PREFIX = "dk"
+# Renamed 2026-09-20 from "dk" (short for the former standalone deploykit repo this engine
+# was vendored out of) -- deployed-app containers are now named pac-<app_id>, matching the
+# rest of this vendored engine's rename away from deploykit branding (see docker-net -> pac-net
+# etc. in pracman/envs/local/*.sh).
+CONTAINER_PREFIX = "pac"
 WORKDIR_BASE = Path(os.environ.get("DEPLOYKIT_WORKDIR", "/srv/deploykit/apps"))
 CLONE_TIMEOUT = 120
 BUILD_TIMEOUT = 300

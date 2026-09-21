@@ -159,7 +159,11 @@ class NginxProxy:
             return _LOCATION_TEMPLATE_DOCKER.format(
                 app_id=app_id,
                 path_prefix=path_prefix.rstrip("/"),
-                upstream_server=f"dk-{app_id}:{container_port}",
+                # Must match backends/docker.py's CONTAINER_PREFIX ("pac" as of 2026-09-20,
+                # renamed from "dk" when this engine was vendored out of the former standalone
+                # deploykit repo) -- the two aren't wired through a shared constant, so keep
+                # them in sync by hand if either changes.
+                upstream_server=f"pac-{app_id}:{container_port}",
                 acl_block=acl_block,
             )
         return _LOCATION_TEMPLATE_HOST.format(
