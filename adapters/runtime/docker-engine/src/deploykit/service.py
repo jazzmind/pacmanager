@@ -32,7 +32,7 @@ _log = logging.getLogger(__name__)
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic import BaseModel as _BodyBaseModel
@@ -167,6 +167,44 @@ def create_app(
     @app.get("/health", tags=["health"])
     async def liveness():
         return {"status": "ok"}
+
+    # ------------------------------------------------------------------
+    # nginx auth_request target (PAC_NGINX_AUTH=deploykit) -- unauthenticated by design
+    # ------------------------------------------------------------------
+
+    @app.get("/internal/auth/{app_id}", include_in_schema=False)
+    async def internal_auth(app_id: str, request: Request):
+        """Who may open this app? 401 = not signed in, 403 = signed in but not on the app's list,
+        200 (+ X-Deploykit-Email) = serve. Sign-in itself belongs to deploykit: we forward the
+        visitor's cookie to its /auth/session and apply the app's allowed_emails (the same list
+        pacmanager sets through PUT /api/v1/access/<id>). Fails closed on any error. Called only by
+        nginx's internal auth_request location, never exposed on a public route."""
+        import httpx as _httpx
+        import json as _json
+        from .naming import RESOURCE_PREFIX  # noqa: F401  (documents the namespace this serves)
+
+        url = os.environ.get("PAC_SESSION_CHECK_URL", "http://deploykit:8011/auth/session")
+        try:
+            async with _httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(url, headers={"Cookie": request.headers.get("cookie", "")})
+        except _httpx.HTTPError as exc:
+            _log.warning("session check against %s failed: %s", url, exc)
+            return Response(status_code=503)
+        if r.status_code == 401:
+            return Response(status_code=401)
+        email = (r.headers.get("x-deploykit-email") or "").strip().lower()
+        if r.status_code != 200 or not email:
+            return Response(status_code=401 if r.status_code in (200, 401) else 503)
+        record = await store.get(app_id)
+        if record is None:
+            return Response(status_code=403)  # fail closed: not an app this engine knows
+        extra = _json.loads(record.get("extra") or "{}")
+        allowed = [e.lower() for e in (extra.get("allowed_emails") or [])]
+        if allowed and email not in allowed:
+            return Response(status_code=403)
+        resp = Response(status_code=200)
+        resp.headers["X-Deploykit-Email"] = email
+        return resp
 
     @app.get("/health/ready", tags=["health"])
     async def readiness(principal: Principal = Depends(require_auth)):

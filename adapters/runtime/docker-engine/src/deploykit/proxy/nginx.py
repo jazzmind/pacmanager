@@ -23,6 +23,8 @@ import os
 import re
 from pathlib import Path
 
+from ..naming import app_id_from_conf, conf_name, container_name
+
 # Matches busibox NGINX_CONFIG_DIR env var convention
 _DEFAULT_CONFIG_DIR = Path(os.environ.get("NGINX_CONFIG_DIR", "/etc/nginx/app-locations"))
 _DEFAULT_PUBLIC_URL = os.environ.get("DEPLOYKIT_PUBLIC_URL", "http://localhost")
@@ -30,6 +32,17 @@ _DEFAULT_PUBLIC_URL = os.environ.get("DEPLOYKIT_PUBLIC_URL", "http://localhost")
 # Docker mode: when set, use docker exec for nginx reload/validate and Docker DNS for upstreams
 _NGINX_CONTAINER_NAME = os.environ.get("NGINX_CONTAINER_NAME", "")
 _DEPLOYKIT_DOCKER_NETWORK = os.environ.get("DEPLOYKIT_DOCKER_NETWORK", "")
+
+# How app routes are gated.
+#   none      (default, local) -- the old incoming-header ACL ($http_x_forwarded_email); nothing here
+#             signs anyone in.
+#   deploykit (co-hosted on the sandbox) -- every route runs `auth_request` against this engine's
+#             /internal/auth/<app_id>, which asks deploykit who is signed in (GET /auth/session) and
+#             applies the app's allowed_emails. Needs deploykit.conf's @dk_login and $dk_cookie_clean.
+_NGINX_AUTH = os.environ.get("PAC_NGINX_AUTH", "none")
+if _NGINX_AUTH not in ("none", "deploykit"):
+    raise ValueError(f"PAC_NGINX_AUTH must be 'none' or 'deploykit', got {_NGINX_AUTH!r}")
+_AUTH_UPSTREAM = os.environ.get("PAC_NGINX_AUTH_UPSTREAM", "pac-engine:8011")
 
 # Included inside a server{} block, so upstream{} is not valid here.
 # Docker network mode: use resolver + variable so nginx re-resolves on container restart.
@@ -51,6 +64,42 @@ location ^~ {path_prefix} {{
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+}}
+"""
+
+# Gated by deploykit sign-in (PAC_NGINX_AUTH=deploykit). The internal location carries the app id
+# (the same shape deploykit uses for its own apps), the main location overwrites X-Deploykit-Email
+# with the verified one and removes deploykit's session cookie before the request reaches the app.
+_LOCATION_TEMPLATE_DOCKER_GATED = """\
+# pac-engine managed — do not edit manually (app_id={app_id})
+location = /_pac_auth/{app_id} {{
+    internal;
+    resolver 127.0.0.11 valid=10s;
+    set $pac_auth_up "{auth_upstream}";
+    proxy_pass http://$pac_auth_up/internal/auth/{app_id};
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Cookie $http_cookie;
+}}
+location ^~ {path_prefix} {{
+    resolver 127.0.0.11 valid=10s;
+    auth_request /_pac_auth/{app_id};
+    auth_request_set $pac_email $upstream_http_x_deploykit_email;
+    error_page 401 = @dk_login;
+    error_page 403 =403 /unauthorized;
+    set $backend "{upstream_server}";
+    proxy_pass http://$backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Deploykit-Email $pac_email;
+    proxy_set_header Cookie $dk_cookie_clean;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
     proxy_read_timeout 300s;
@@ -144,7 +193,7 @@ class NginxProxy:
         self.public_url = (public_url or _DEFAULT_PUBLIC_URL).rstrip("/")
 
     def _conf_path(self, app_id: str) -> Path:
-        return self.config_dir / f"{app_id}.conf"
+        return self.config_dir / conf_name(app_id)
 
     def generate_location_block(
         self,
@@ -155,15 +204,22 @@ class NginxProxy:
         allowed_emails: list[str] | None = None,
     ) -> str:
         acl_block = _acl_block(allowed_emails)
+        if _NGINX_AUTH == "deploykit":
+            if not (_DEPLOYKIT_DOCKER_NETWORK and container_port is not None):
+                raise ValueError("PAC_NGINX_AUTH=deploykit requires Docker network mode (DEPLOYKIT_DOCKER_NETWORK)")
+            # allowed_emails is enforced by the engine's /internal/auth/<app_id> (it can't be done
+            # in nginx: `if` runs before auth_request has produced the email).
+            return _LOCATION_TEMPLATE_DOCKER_GATED.format(
+                app_id=app_id,
+                path_prefix=path_prefix.rstrip("/"),
+                upstream_server=f"{container_name(app_id)}:{container_port}",
+                auth_upstream=_AUTH_UPSTREAM,
+            )
         if _DEPLOYKIT_DOCKER_NETWORK and container_port is not None:
             return _LOCATION_TEMPLATE_DOCKER.format(
                 app_id=app_id,
                 path_prefix=path_prefix.rstrip("/"),
-                # Must match backends/docker.py's CONTAINER_PREFIX ("pac" as of 2026-09-20,
-                # renamed from "dk" when this engine was vendored out of the former standalone
-                # deploykit repo) -- the two aren't wired through a shared constant, so keep
-                # them in sync by hand if either changes.
-                upstream_server=f"pac-{app_id}:{container_port}",
+                upstream_server=f"{container_name(app_id)}:{container_port}",
                 acl_block=acl_block,
             )
         return _LOCATION_TEMPLATE_HOST.format(
@@ -227,9 +283,9 @@ class NginxProxy:
         if not self.config_dir.exists():
             return []
         routes = []
-        for f in sorted(self.config_dir.glob("*.conf")):
+        for f in sorted(self.config_dir.glob(conf_name("*"))):
             text = f.read_text()
-            app_id = f.stem
+            app_id = app_id_from_conf(f.stem)
             path_line = next(
                 (line for line in text.splitlines() if "location ^~" in line), ""
             )

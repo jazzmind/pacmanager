@@ -45,6 +45,8 @@ import logging
 import os
 import secrets
 
+from .naming import RESOURCE_PREFIX, ddb_table_prefix
+
 _log = logging.getLogger(__name__)
 
 _DDB_ENDPOINT = os.environ.get("DEPLOYKIT_DDB_ENDPOINT", "http://deploykit-dynamodb:8000")
@@ -123,9 +125,8 @@ def _provision_sync(app_id: str) -> dict:
     Does NOT create the app's own tables — that is the app's responsibility
     on boot (see module docstring).
     """
-    app_slug = _slug(app_id)
-    table_prefix = f"dk_{app_slug}_"
-    access_key_id = f"dk{_access_key_slug(app_id)}"
+    table_prefix = ddb_table_prefix(app_id)
+    access_key_id = f"{RESOURCE_PREFIX}{_access_key_slug(app_id)}"
     secret_access_key = secrets.token_hex(16)
 
     client = _client(access_key_id, secret_access_key)
@@ -160,12 +161,11 @@ def _deprovision_sync(app_id: str) -> None:
     wait-until-deleted retry loop. dynamodb-local's deletes are effectively
     instant, so this stays a simple fire-and-forget loop for the sandbox case.
     """
-    app_slug = _slug(app_id)
-    table_prefix = f"dk_{app_slug}_"
+    table_prefix = ddb_table_prefix(app_id)
     # Credential values are irrelevant to dynamodb-local; any non-empty
     # alphanumeric-only strings authenticate against the shared -sharedDb
     # namespace (see _access_key_slug's docstring for why alphanumeric-only).
-    client = _client(f"dk{_access_key_slug(app_id)}", "deprovision")
+    client = _client(f"{RESOURCE_PREFIX}{_access_key_slug(app_id)}", "deprovision")
 
     try:
         table_names = client.list_tables().get("TableNames", [])
