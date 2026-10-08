@@ -115,3 +115,16 @@ test('PROVIDER-011 a non-local model keeps falling back to direct vendor keys as
   const result = await provider.complete([{ role: 'user', content: 'hi' }]);
   assert.equal(result.route, 'anthropic-direct');
 });
+
+test('PROVIDER-THINK Claude 5.5 rejects thinking:{type:"disabled"} with a 400 -- retry with "between_tools", and remember it', async t => {
+  const seen = [];
+  const fakeFetch = async (url, opts) => {
+    const body = JSON.parse(opts.body); seen.push(body.thinking?.type ?? null);
+    if (body.thinking?.type === 'disabled') return new Response(JSON.stringify({ error: { message: 'To turn thinking off on this model, send "thinking": {"type": "between_tools"} instead of {"type": "disabled"}' } }), { status: 400 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }), { status: 200 });
+  };
+  const provider = createProvider({ PAC_LITELLM_URL: 'http://x.test', PAC_LITELLM_KEY: 'k' }, fakeFetch);
+  assert.equal((await provider.complete([{ role: 'user', content: 'hi' }])).text, 'ok');
+  assert.equal((await provider.complete([{ role: 'user', content: 'hi' }])).text, 'ok');
+  assert.deepEqual(seen, ['disabled', 'between_tools', 'between_tools']);
+});
