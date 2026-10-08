@@ -17,10 +17,14 @@ import { createAgentAdapter } from './agent-adapter.js';
 import { loadBrand } from './brand.js';
 import { principalFromProxyHeaders } from './proxy-auth.js';
 import { adminOverview,adminServices,adminLlmTest,adminOrchestrationTest,adminAgentTest } from './admin.js';
-import { appChat } from './chat.js';
+import { appChat,appChatStream } from './chat.js';
+import { draftApplication } from './draft.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
+// Exact request path -> file under demo/web/. The ONLY way a /web file is reachable: no prefix matching, so nothing here can be traversed out of.
+const STATIC_FILES=Object.freeze({'/':'index.html','/ui.js':'ui.js','/graduation-ui.js':'graduation-ui.js','/style.css':'style.css','/admin.html':'admin.html','/admin.js':'admin.js','/art.js':'art.js',
+  '/vendor/marked.min.js':'vendor/marked.min.js','/vendor/purify.min.js':'vendor/purify.min.js','/vendor/LICENSE-marked.txt':'vendor/LICENSE-marked.txt','/vendor/LICENSE-purify.txt':'vendor/LICENSE-purify.txt'});
 // `kind` and `template` are dual-accept (see definition.js): a caller supplies exactly one.
 // `kind` picks a real artifact type -- interactive/knowledge/application, or "auto" to let the
 // model decide -- and pairs with tier "intent" (no source yet; generate_application produces
@@ -33,6 +37,7 @@ const toolsList=[
   ['inspect_application','Read draft, build logs, generation status, documents and comments',{id:{type:'string'}},['id']],
   ['update_application','Update the definition; revision prevents overwriting another edit. Include tier and source to change or keep generated code — omitting them resets the app to the bounded template tier.',{id:{type:'string'},revision:{type:'integer'},...definitionProps},['id','revision','title','brief','accent']],
   ['generate_application','Generate or revise real source for a "kind"-based application using the configured authoring adapter — an actual model call, not a template. If the artifact is tier "intent" (nothing generated yet), this generates from scratch and changeRequest is ignored. If it already has source, changeRequest is REQUIRED and describes the specific change to make — the model is given the current source and asked to revise it, not rewrite it from the brief. To start over from nothing instead, reset tier to "intent" first (a separate, explicit, destructive step). Fails clearly (501) if no adapter is configured; validates and repairs its own output against the same safety gate a hand-authored source map must pass, up to a few attempts, before failing. Poll inspect_application for progress and the result.',{id:{type:'string'},changeRequest:{type:'string'}},['id']],
+  ['cancel_generation','Stop a running generation: the authoring call is aborted, nothing is written to the application, and the slot is freed. Fails (409) if nothing is generating.',{id:{type:'string'}},['id']],
   ['rollback_application','Roll an application back to a previously published release. Publishes a NEW release with the old release\'s exact content — release numbers stay monotonic, nothing is rewritten. Only releases still within the retention window (see inspect_application\'s releases list) can be targeted.',{id:{type:'string'},release:{type:'integer'}},['id','release']],
   ['build_application','Start a real build, then inspect its status',{id:{type:'string'}},['id']],
   ['bind_mock_claims','Grant access to synthetic claims; no live service',{id:{type:'string'}},['id']],
@@ -75,6 +80,22 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
   }catch{}
   // Extra origins the same studio answers on (short host name vs FQDN, an ingress hostname...). Origin only, no path.
   for(const o of String(process.env.PAC_PUBLIC_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean))originAliases.add(o.replace(/\/+$/,''));
+  /** SSE variant of POST /chat. Headers go out immediately so proxies/browsers open the stream; the exchange is persisted only once the model has finished
+   * (event: done carries the stored entry). A client that disconnects first aborts the upstream call and persists nothing. */
+  async function chatStream(principal,id,app,body,res){
+    if(body.nonce!==undefined&&(typeof body.nonce!=='string'||body.nonce.length>64))throw new DemoError(400,'nonce must be a string of at most 64 characters');
+    res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no',Connection:'keep-alive'});
+    res.flushHeaders();res.socket?.setNoDelay(true);
+    const abort=new AbortController(),send=(event,data)=>{if(!res.writableEnded&&!res.destroyed)res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);};
+    const ping=setInterval(()=>{if(!res.writableEnded&&!res.destroyed)res.write(': ping\n\n');},15000);
+    res.on('close',()=>{clearInterval(ping);if(!res.writableEnded)abort.abort();});
+    try{
+      const result=await appChatStream(app,{mode:body.mode,message:body.message},text=>send('delta',{text}),abort.signal);
+      if(abort.signal.aborted)return;
+      send('done',store.recordChat(principal,id,{mode:body.mode,message:body.message,reply:result.reply,nonce:body.nonce}));
+    }catch(error){if(!abort.signal.aborted)send('error',{error:error.message,status:error.status||400});}
+    finally{clearInterval(ping);res.end();}
+  }
   const server=http.createServer(async(req,res)=>{
     const json=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
     const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Lax; Path=${base||''}/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
@@ -105,9 +126,9 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         res.setHeader('Content-Type','text/javascript');
         return res.end(readFileSync(new URL('./capabilities.js',import.meta.url),'utf8'));
       }
-      if(req.method==='GET'&&['/','/ui.js','/graduation-ui.js','/style.css','/admin.html','/admin.js'].includes(path)){
-        const file=path==='/'?'index.html':path.slice(1);res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');
-        let content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');
+      if(req.method==='GET'&&Object.hasOwn(STATIC_FILES,path)){
+        const file=STATIC_FILES[path];res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':file.endsWith('.txt')?'text/plain; charset=utf-8':'text/javascript');
+        let content;try{content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');}catch(e){if(e.code==='ENOENT')throw new DemoError(404,'Not found');throw e;} // an allowlisted asset the front end hasn't shipped yet is a 404, not a crash
         if(file==='index.html'){
           content=content
             .replace(/\{\{PAC_PRODUCT_NAME\}\}/g,escape(brand.data.productName||'PAC Manager'))
@@ -125,7 +146,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
             // above: logoMono is for light surfaces only, verified live at ~1.1:1 contrast on
             // dark). No CSS-filter recoloring here either, same lint.forbidLogoRecolor reason.
             .replace(/\{\{PAC_LOGO_REVERSE_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
-          content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.keys(brand.accentPalette()).map(k=>`<option value="${escape(k)}">${escape(brand.accentLabel(k))}</option>`).join(''));
+          content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.entries(brand.accentPalette()).map(([k,hex])=>`<option value="${escape(k)}" data-color="${escape(String(hex))}">${escape(brand.accentLabel(k))}</option>`).join(''));
         }
         if(file.endsWith('.html')){
           // Point every root-absolute asset/link at the prefix, and hand the page its base + sign-out target.
@@ -182,6 +203,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'inspect_application':output=store.view(principal,a.id);break;
               case 'update_application':{const {id,revision,...config}=a;output=store.update(principal,id,config,revision);break;}
               case 'generate_application':output=await store.startGeneration(principal,a.id,{changeRequest:a.changeRequest});break;
+              case 'cancel_generation':output=store.cancelGeneration(principal,a.id);break;
               case 'rollback_application':output=store.rollback(principal,a.id,a.release);break;
               case 'build_application':output=store.startBuild(principal,a.id);break;
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
@@ -255,12 +277,16 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         }
         throw new DemoError(405,'Method not allowed');
       }
+      if(path==='/api/drafts'&&req.method==='POST'){
+        if(principal.kind!=='owner'&&principal.kind!=='user')throw new DemoError(403,'Sign in to create an application'); // same gate as store.create()
+        return json(200,await draftApplication({brief:body.brief,history:body.history}));
+      }
       if(path==='/api/logout'&&req.method==='POST'){store.state.sessions=store.state.sessions.filter(s=>s!==principal);store.save();cookie('');return json(200,{ok:true});}
       if(path==='/api/apps'){
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -294,11 +320,16 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       switch(action){
         case 'definition':store.update(principal,id,body.config,body.revision);break;
         case 'build':return json(202,store.startBuild(principal,id));
-        case 'generate':return json(202,await store.startGeneration(principal,id,{changeRequest:body.changeRequest}));
+        case 'generate':return json(202,await store.startGeneration(principal,id,{changeRequest:body.changeRequest,plan:body.plan}));
+        case 'generate/cancel':return json(200,store.cancelGeneration(principal,id));
+        case 'plan':return json(200,store.setPlan(principal,id,{text:body.text,status:body.status}));
         case 'rollback':return json(200,store.rollback(principal,id,body.release));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;
-        case 'chat':{const result=await appChat(app,{mode:body.mode,message:body.message});return json(200,store.recordChat(principal,id,{mode:body.mode,message:body.message,reply:result.reply}));}
+        case 'chat':{
+          if(/text\/event-stream/.test(req.headers.accept||''))return await chatStream(principal,id,app,body,res);
+          const result=await appChat(app,{mode:body.mode,message:body.message});return json(200,store.recordChat(principal,id,{mode:body.mode,message:body.message,reply:result.reply,nonce:body.nonce}));
+        }
         case 'binding':store.bind(principal,id);break;
         case 'publish':store.publish(principal,id);break;
         case 'invite':return json(201,{url:origin+base+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});

@@ -1,4 +1,4 @@
-import { completeChat } from './litellm.js';
+import { completeChat, streamChat } from './litellm.js';
 
 /** What the model is honestly told about the app it's discussing -- never invented, never the
  * full source dump (that would blow the token budget and isn't needed for either mode below). */
@@ -21,7 +21,7 @@ function appContext(app) {
  * a requested change for the user to review/amend before anything is executed (execution is a
  * separate, explicit step -- see the "Execute this plan" action card in ui.js -- not part of
  * this call at all). Neither mode ever writes code or touches the app's real definition. */
-export async function appChat(app, { mode, message }, env = process.env) {
+function chatRequest(app, { mode, message }, env) {
   if (!['chat', 'plan'].includes(mode)) throw Object.assign(new Error('mode must be "chat" or "plan"'), { status: 400 });
   if (typeof message !== 'string' || !message.trim() || message.length > 3000) throw Object.assign(new Error('message must be 1–3000 characters'), { status: 400 });
   const context = appContext(app);
@@ -35,7 +35,20 @@ export async function appChat(app, { mode, message }, env = process.env) {
   // prompt. Documented elsewhere in this workspace as the same trap; this is the concrete
   // number that actually clears it for a short plan/answer.
   const model = mode === 'plan' ? (env.PAC_PLAN_MODEL || 'agent') : (env.PAC_CHAT_MODEL || 'chat'); // aliases, resolved by LiteLLM
-  const result = await completeChat({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: message.trim() }], maxTokens: 3000 }, env);
+  return { model, messages: [{ role: 'system', content: system }, { role: 'user', content: message.trim() }], maxTokens: 3000 };
+}
+const checkResult = (result, mode) => {
   if (!result.content && result.finishReason === 'length') throw Object.assign(new Error('The model ran out of budget before it finished answering. Try a shorter or more specific question.'), { status: 502 });
   return { reply: result.content, mode };
+};
+
+export async function appChat(app, input, env = process.env) {
+  const request = chatRequest(app, input, env);
+  return checkResult(await completeChat(request, env), input.mode);
+}
+
+/** Same prompt, validation and empty+length rule as appChat, but streams visible text to onDelta as it arrives (see litellm.js's streamChat). */
+export async function appChatStream(app, input, onDelta, signal, env = process.env) {
+  const request = chatRequest(app, input, env);
+  return checkResult(await streamChat({ ...request, signal }, onDelta, env), input.mode);
 }

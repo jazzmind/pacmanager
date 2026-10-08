@@ -20,10 +20,10 @@ export function createAuthoringAdapter(env = process.env) {
   const [command, args] = parseCommandLine(line);
   const generateTimeoutMs = Number(env.PAC_AUTHORING_ADAPTER_TIMEOUT_MS || 180000);
   const probeTimeoutMs = Number(env.PAC_AUTHORING_PROBE_TIMEOUT_MS || 10000);
-  const invoke = (operation, timeoutMs, { artifactId, principalId, payload } = {}) => {
+  const invoke = (operation, timeoutMs, { artifactId, principalId, payload, signal } = {}) => {
     if (!AUTHORING_OPERATIONS.includes(operation)) throw new Error(`Unsupported authoring operation: ${operation}`);
     const request = envelope({ requestId: randomUUID(), artifactId, principalId, capability: AUTHORING_CAPABILITY, operation, payload, deadline: Date.now() + timeoutMs });
-    return runAdapter(command, args, request, timeoutMs).then(validateResult);
+    return runAdapter(command, args, request, timeoutMs, { signal }).then(validateResult);
   };
   return {
     mode: 'authoring adapter: ' + line,
