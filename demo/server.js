@@ -286,7 +286,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       if(path==='/api/logout'&&req.method==='POST'){store.state.sessions=store.state.sessions.filter(s=>s!==principal);store.save();cookie('');return json(200,{ok:true});}
       if(path==='/api/apps'){
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
-        if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
+        if(req.method==='POST'){const {plan,...cfg}=body;return json(201,store.view(principal,store.create(principal,cfg,{plan}).id));}
       }
       const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan|preview-start|preview-stop|preview-status|preview-logs))?$/);
       if(!match)throw new DemoError(404,'Not found');
@@ -327,7 +327,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'build':return json(202,store.startBuild(principal,id));
         case 'generate':return json(202,await store.startGeneration(principal,id,{changeRequest:body.changeRequest,plan:body.plan}));
         case 'generate/cancel':return json(200,store.cancelGeneration(principal,id));
-        case 'plan':return json(200,store.setPlan(principal,id,{text:body.text,status:body.status}));
+        case 'plan':return json(200,store.setPlan(principal,id,{text:body.text,status:body.status,capabilities:body.capabilities}));
         case 'rollback':return json(200,store.rollback(principal,id,body.release));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;

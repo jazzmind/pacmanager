@@ -80,7 +80,7 @@ const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toa
 // the in-flight request fail -- that is expected, not worth a toast.
 const fireGenerate=(id,body)=>api('apps/'+id+'/generate',body).then(refresh).catch(error=>{if(!/cancel/i.test(error.message))toast(error.message);refresh().catch(()=>{});});
 const hasSource=()=>['static','app'].includes(app.config.tier);
-const planVisible=()=>Boolean(app?.plan?.text)&&app.plan.status!=='discarded';
+const planVisible=()=>Boolean(app?.plan?.text); // every application has a plan: it starts as the brief it was created from
 // A fresh intent-tier app builds from {plan}; one that already has source takes a {changeRequest}.
 const genBody=()=>planVisible()&&!hasSource()?{plan:app.plan.text}:{};
 
@@ -258,13 +258,29 @@ function draw(){
 }
 // The plan lives on the app (app.plan), so it survives a reload; this is the full-width reading/editing surface.
 const PLAN_LABEL={draft:'Draft',executing:'Building…',executed:'Built'};
+// Plan editor: same capability chips as the new-application composer. `planCaps` holds the explicit choices while editing.
+let planCaps=null,planMenu=false;
+const explicitOf=ids=>{const implied=new Set(CAPABILITIES.flatMap(c=>ids.includes(c.id)?(c.implies||[]):[]));return ids.filter(id=>!implied.has(id));};
+function renderPlanCaps(){
+  const editing=planEditing&&planCaps,explicit=editing?planCaps:explicitOf(app.config.capabilities||[]);
+  const nextKind=editing?deriveKind(expandCapabilities(explicit)):null,curKind=app.config.kind;
+  const note=editing&&['interactive','knowledge','application'].includes(curKind)&&nextKind!==curKind?`<p class="hint warn">Saving changes this from ${esc(KIND_DESCRIPTIONS[curKind]||curKind)} to ${esc(KIND_DESCRIPTIONS[nextKind])}. Use <b>Build this plan</b> afterwards to apply it.</p>`:editing?'<p class="hint">New capabilities take effect the next time you build the plan.</p>':'';
+  $('plan-caps').innerHTML='<h4>Capabilities</h4><div class="chips">'+chipsFor({explicit,editable:Boolean(editing),menuOpen:planMenu,rm:'data-prm',add:'data-padd',toggle:'paddmenu'})+'</div>'+note;
+}
+$('plan-caps').addEventListener('click',e=>{
+  const t=e.target.closest('[data-prm],[data-padd],[data-act="paddmenu"]');if(!t||!planCaps)return;
+  if(t.dataset.prm)planCaps=planCaps.filter(c=>c!==t.dataset.prm);
+  else if(t.dataset.padd){if(!planCaps.includes(t.dataset.padd))planCaps.push(t.dataset.padd);planMenu=false;}
+  else planMenu=!planMenu;
+  renderPlanCaps();
+});
 function renderPlan(){
   const p=app.plan,busy=p.status==='executing'||app.generation?.status==='generating';
   $('plan-status').textContent=PLAN_LABEL[p.status]||p.status;$('plan-status').className='plan-chip plan-'+p.status;
   $('plan-meta').textContent=[p.by,p.at&&when(p.at)].filter(Boolean).join(' · ');
   $('plan-build').disabled=busy||planEditing;$('plan-build').lastChild.textContent=p.status==='executed'?'Build again':'Build this plan';
-  $('plan-edit').hidden=busy||planEditing;$('plan-discard').hidden=busy||planEditing;
-  $('plan-body').hidden=planEditing;$('plan-editor').hidden=!planEditing;
+  $('plan-edit').hidden=busy||planEditing;$('plan-discard').hidden=true; // a plan can be edited, not removed
+  $('plan-body').hidden=planEditing;$('plan-editor').hidden=!planEditing;renderPlanCaps();
   if(!planEditing)setHtml($('plan-body'),md(p.text));
 }
 function renderHistory(){
@@ -369,9 +385,9 @@ $('chat-cards').onclick=action(async e=>{
 });
 // ---- plan tab actions
 $('plan-build').onclick=action(async()=>{$('plan-build').disabled=true;const message=await RUN.executePlan();await refresh();toast(message);});
-$('plan-edit').onclick=()=>{planEditing=true;$('plan-text').value=app.plan.text;renderPlan();$('plan-text').focus();};
-$('plan-cancel').onclick=()=>{planEditing=false;renderPlan();};
-$('plan-save').onclick=action(async()=>{const text=$('plan-text').value.trim();if(!text)throw new Error('A plan cannot be empty — discard it instead.');await api('apps/'+app.id+'/plan',{text});planEditing=false;await refresh();toast('Plan saved.');});
+$('plan-edit').onclick=()=>{planEditing=true;planCaps=explicitOf(app.config.capabilities||[]);planMenu=false;$('plan-text').value=app.plan.text;renderPlan();$('plan-text').focus();};
+$('plan-cancel').onclick=()=>{planEditing=false;planCaps=null;planMenu=false;renderPlan();};
+$('plan-save').onclick=action(async()=>{const text=$('plan-text').value.trim();if(!text)throw new Error('A plan cannot be empty — discard it instead.');await api('apps/'+app.id+'/plan',{text,capabilities:expandCapabilities(planCaps||[])});planEditing=false;planCaps=null;planMenu=false;await refresh();toast('Plan saved.');});
 $('plan-discard').onclick=action(async()=>{if(!confirm('Discard this plan? Nothing has been built from it.'))return;await api('apps/'+app.id+'/plan',{status:'discarded'});planOpen=false;planEditing=false;await refresh();toast('Plan discarded.');});
 $('release-history-full').onclick=e=>{
   const b=e.target.closest('[data-release]');if(!b)return;
@@ -472,14 +488,16 @@ function swatchesHtml(){return `<div class="swatches" role="group" aria-label="A
 // Brand accent hexes aren't exposed to the page, only keys/labels -- use the key as a CSS colour when it is one ("teal"),
 // otherwise a stable generated hue, so swatches stay distinguishable and brand-neutral.
 function paintSwatches(root){root.querySelectorAll('[data-sw]').forEach(s=>{const v=s.dataset.sw,hex=$('accent').querySelector(`option[value="${CSS.escape(v)}"]`)?.dataset.color;s.style.setProperty('--sw',hex||`hsl(${hueFor(v)} 70% 45%)`);});}
-function chipsHtml(editable){
-  const eff=effectiveCaps(),why=new Map((cs.draft?.capabilities||[]).map(c=>[c.id,c.why]));
-  const chips=[...eff].map(id=>{const c=capById(id);if(!c)return '';const implied=!cs.caps.includes(id),tip=why.get(id)||c.description;
-    return `<span class="chip${implied?' implied':''}" title="${esc(tip)}"><span class="chip-main"><b>${esc(c.label)}</b><small>${esc(tip)}</small></span>${implied?'<em class="cap-tag">included</em>':editable?`<button type="button" class="chip-x" data-rm="${esc(id)}" aria-label="Remove ${esc(c.label)}"><svg class="icon"><use href="#icon-x"/></svg></button>`:''}</span>`;}).join('');
+// explicit = the capabilities the user chose; anything they imply is shown as "included" and can't be removed on its own.
+function chipsFor({explicit,why=new Map(),editable,menuOpen,rm='data-rm',add='data-add',toggle='addmenu'}){
+  const eff=new Set(expandCapabilities(explicit));
+  const chips=[...eff].map(id=>{const c=capById(id);if(!c)return '';const implied=!explicit.includes(id),tip=why.get(id)||c.description;
+    return `<span class="chip${implied?' implied':''}" title="${esc(tip)}"><span class="chip-main"><b>${esc(c.label)}</b><small>${esc(tip)}</small></span>${implied?'<em class="cap-tag">included</em>':editable?`<button type="button" class="chip-x" ${rm}="${esc(id)}" aria-label="Remove ${esc(c.label)}"><svg class="icon"><use href="#icon-x"/></svg></button>`:''}</span>`;}).join('');
   const rest=CAPABILITIES.filter(c=>c.group!=='future'&&!eff.has(c.id));
-  const add=editable&&rest.length?`<span class="addwrap"><button type="button" class="chip chip-add" data-act="addmenu" aria-expanded="${cmpMenu}"><svg class="icon"><use href="#icon-plus"/></svg>Add</button><div class="addmenu"${cmpMenu?'':' hidden'}>${rest.map(c=>`<button type="button" data-add="${esc(c.id)}"><b>${esc(c.label)}</b><small>${esc(c.description)}</small></button>`).join('')}</div></span>`:'';
-  return (chips||'<span class="hint">No extra capabilities — a simple self-contained page.</span>')+add;
+  const addBtn=editable&&rest.length?`<span class="addwrap"><button type="button" class="chip chip-add" data-act="${toggle}" aria-expanded="${menuOpen}"><svg class="icon"><use href="#icon-plus"/></svg>Add</button><div class="addmenu"${menuOpen?'':' hidden'}>${rest.map(c=>`<button type="button" ${add}="${esc(c.id)}"><b>${esc(c.label)}</b><small>${esc(c.description)}</small></button>`).join('')}</div></span>`:'';
+  return (chips||'<span class="hint">No extra capabilities — a simple self-contained page.</span>')+addBtn;
 }
+function chipsHtml(editable){return chipsFor({explicit:cs.caps,why:new Map((cs.draft?.capabilities||[]).map(c=>[c.id,c.why])),editable,menuOpen:cmpMenu});}
 const kindLine=()=>{const k=deriveKind([...effectiveCaps()]);return `This will be built as ${KIND_DESCRIPTIONS[k]}.`;};
 function renderCapabilityGroups(){
   const effective=effectiveCaps(),explicit=new Set(cs.caps);
@@ -568,11 +586,11 @@ function validateDraft(){
 async function buildIt(){
   validateDraft();
   const caps=[...effectiveCaps()],plan=cs.manual?'':cs.draft?.plan;
-  const result=await api('apps',{title:cs.title.trim(),brief:((cs.summary||'').trim()||cs.prompt.trim()).slice(0,3000),accent:cs.accent,kind:deriveKind(caps),tier:'intent',capabilities:caps});
+  const result=await api('apps',{title:cs.title.trim(),brief:((cs.summary||'').trim()||cs.prompt.trim()).slice(0,3000),accent:cs.accent,kind:deriveKind(caps),tier:'intent',capabilities:caps,...(plan?{plan}:{})});
   sessionStorage.removeItem(CMP_KEY);cs=null;$('composer').close();
-  selected=result.id;published=false;resetView();wantPlan=Boolean(plan);history.replaceState(null,'',BASE+'/?app='+selected);
-  fireGenerate(selected,plan?{plan}:{});
-  await refresh();toast(plan?'Application created. Building from your plan…':'Application created. Generating…');
+  selected=result.id;published=false;resetView();wantPlan=true;history.replaceState(null,'',BASE+'/?app='+selected);
+  fireGenerate(selected,{plan:plan||result.plan?.text}); // every app has a starting plan (the AI draft, else its brief)
+  await refresh();toast('Application created. Building from your plan…');
 }
 const COMPOSER_ACTIONS={
   sketch:()=>sketch(),retry:()=>sketch(cs.pending),refine:()=>{const r=$('cmp-reply').value.trim();if(!r){toast('Type an answer or a change first.');return;}return sketch(r);},

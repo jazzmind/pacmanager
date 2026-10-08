@@ -167,7 +167,7 @@ test('PLAN-001 Plan-mode chat (JSON and SSE) stores a draft plan that survives a
   const created = await call('/api/apps', classic);
   const id = created.data.id;
   assert.equal((await call(`/api/apps/${id}/chat`, { mode: 'chat', message: 'q' })).status, 200);
-  assert.equal((await call('/api/apps/' + id)).data.plan, null); // chat mode never makes a plan
+  const initial = (await call('/api/apps/' + id)).data.plan; assert.equal(initial.status, 'draft'); assert.match(initial.text, /Chat App/); // every app starts with a plan (its brief); chat mode never changes it
   await call(`/api/apps/${id}/chat`, { mode: 'plan', message: 'add a chart' });
   let plan = (await call('/api/apps/' + id)).data.plan;
   assert.equal(plan.status, 'draft'); assert.match(plan.text, /Add a chart/); assert.ok(plan.at);
@@ -268,4 +268,20 @@ test('STATIC-001 allowlisted assets are routable (404 only when the file is abse
     else assert.equal(res.status, 404, p);
   }
   for (const p of ['/vendor/other.js', '/%2e%2e/server.js', '/vendor/']) assert.notEqual((await raw(p)).status, 200, p);
+});
+
+test('PLAN-CAPS a plan carries the capabilities: editing them updates the definition, kind follows, revision bumps; bad ids rejected', async t => {
+  const { call } = await fixture(t, { env: {} });
+  const created = await call('/api/apps', { title: 'Caps App', brief: 'Exercises capability edits via the plan.', accent: 'teal', kind: 'interactive', tier: 'intent', capabilities: ['analyze'] }, );
+  assert.equal(created.status, 201);
+  const id = created.data.id, rev = created.data.revision;
+  assert.match(created.data.plan.text, /Caps App/);
+  const up = await call(`/api/apps/${id}/plan`, { text: 'Now with a database', capabilities: ['analyze', 'shared-data'] });
+  assert.equal(up.status, 200); assert.deepEqual(up.data.capabilities, ['analyze', 'shared-data']); assert.equal(up.data.kind, 'application');
+  const view = (await call('/api/apps/' + id)).data;
+  assert.equal(view.config.kind, 'application'); assert.ok(view.revision > rev);
+  assert.equal((await call(`/api/apps/${id}/plan`, { capabilities: ['nope'] })).status, 400);
+  assert.equal((await call(`/api/apps/${id}/plan`, { capabilities: ['messaging'] })).status, 400); // future capability
+  const down = await call(`/api/apps/${id}/plan`, { capabilities: ['analyze'] });
+  assert.equal(down.data.kind, 'interactive');
 });
