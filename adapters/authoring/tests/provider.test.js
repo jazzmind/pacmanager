@@ -128,3 +128,15 @@ test('PROVIDER-THINK Claude 5.5 rejects thinking:{type:"disabled"} with a 400 --
   assert.equal((await provider.complete([{ role: 'user', content: 'hi' }])).text, 'ok');
   assert.deepEqual(seen, ['disabled', 'between_tools', 'between_tools']);
 });
+
+test('PROVIDER-TEMP a model that deprecates temperature gets it dropped on retry, and stays dropped', async t => {
+  const seen = [];
+  const fakeFetch = async (url, opts) => {
+    const body = JSON.parse(opts.body); seen.push('temperature' in body);
+    if ('temperature' in body) return new Response(JSON.stringify({ error: { message: '`temperature` is deprecated for this model.' } }), { status: 400 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }), { status: 200 });
+  };
+  const provider = createProvider({ PAC_LITELLM_URL: 'http://x.test', PAC_LITELLM_KEY: 'k' }, fakeFetch);
+  await provider.complete([{ role: 'user', content: 'hi' }]); await provider.complete([{ role: 'user', content: 'hi' }]);
+  assert.deepEqual(seen, [true, false, false]);
+});
