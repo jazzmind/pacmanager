@@ -6,6 +6,9 @@ import { graduationFiles } from './archive.js';
 import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
 import { deriveEnvRefs,deriveKind,expandCapabilities } from './capabilities.js';
 import { deriveGraduationResources } from './services.js';
+import { writeKitFiles,readWorkdirSource } from './kit-files.js';
+import { loadBrand } from './brand.js';
+const kitBrand=loadBrand();
 
 const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
 const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATTEMPTS||3));
@@ -207,9 +210,10 @@ export class Store {
     if(app.build?.status==='building')fail(409,'Wait for the current build to finish before regenerating');
     if(this.generating>=2)fail(429,'Two generations are already running');
     if(!app.config.kind)fail(409,'This application has no artifact kind to generate — it is a classic template-tier app.');
-    const isRevise=app.config.tier!=='intent'&&Boolean(app.config.source);
+    const isRevise=app.config.tier!=='intent'&&(Boolean(app.config.source)||(app.config.tier==='app'&&Boolean(app.config.sourcePath)));
     if(isRevise&&(typeof changeRequest!=='string'||!changeRequest.trim()))fail(400,'Describe the change you want (changeRequest) to revise an existing artifact. To regenerate it from scratch instead, reset it to tier "intent" first — that discards the current source.');
-    const currentSource=isRevise?app.config.source:null;
+    let currentSource=isRevise?app.config.source||null:null,overCapNote=null;
+    if(isRevise&&app.config.tier==='app'){const r=readWorkdirSource(app.config.sourcePath);if(r.overCap)overCapNote=`Existing source is too large to send for a revision (${r.overCap}); regenerating from the plan and your change request instead.`;else currentSource=r.source;}
     // An approved build plan: on a fresh app it rides along in the adapter's brief (never in the stored config.brief); on a revision
     // it only links to app.plan when the changeRequest IS the drafted plan text, so the plan card can track executing/executed.
     let planBrief='',linkedPlan=null;
@@ -223,7 +227,8 @@ export class Store {
     app.generation={id:job,status:'generating',requestedAtRevision:app.revision,startedAt:now(),currentAttempt:0,maxAttempts:AUTHORING_MAX_ATTEMPTS,attempts:[],logs:[{at:now(),text:`Requested ${isRevise?'revision':'generation'} · ${kind} · ${authoring.mode}`}]};
     this.save();
     const workdir=(kind==='application'||kind==='auto')?join(GENERATED_APPS_DIR||this.dataDir,'generated',app.id):null;
-    if(workdir)mkdirSync(workdir,{recursive:true,mode:0o700});
+    if(workdir){mkdirSync(workdir,{recursive:true,mode:0o700});writeKitFiles(workdir,{style:app.config.style,accentHex:kitBrand.accentPalette()[app.config.accent]});}
+    if(overCapNote)app.generation.logs.push({at:now(),text:overCapNote});
     this.lastGeneration=(async()=>{
       let previousAttempt=null,lastIssues=[];
       for(let n=1;n<=AUTHORING_MAX_ATTEMPTS;n++){
@@ -234,7 +239,7 @@ export class Store {
         let result;
         try{
           result=await authoring.generate({artifactId:app.id,principalId:p.label,payload:{
-            kind,title:app.config.title,brief:app.config.brief+planBrief,accent:app.config.accent,
+            kind,title:app.config.title,brief:app.config.brief+planBrief+(overCapNote?'\n\nChange to apply: '+changeRequest.trim():''),accent:app.config.accent,accentHex:kitBrand.accentPalette()[app.config.accent],style:app.config.style||null,
             capabilities:app.config.capabilities||[],
             attempt:n,maxAttempts:AUTHORING_MAX_ATTEMPTS,
             constraints:{...SOURCE_LIMITS,forbidden:FORBIDDEN_LABELS,requireBriefingsMarker:kind==='knowledge'},
@@ -276,6 +281,7 @@ export class Store {
         try{
           const newConfig={title:app.config.title,brief:app.config.brief,kind:output.kind,accent:app.config.accent,tier:sourcePath?'app':'static'};
           if(sourcePath)newConfig.sourcePath=sourcePath;else newConfig.source=output.source;
+          if(app.config.style)newConfig.style=app.config.style; // a style choice survives regeneration
           if(app.config.repo)newConfig.repo=app.config.repo; // a repo binding must survive a revision, not just the initial generation
           if(app.config.capabilities){
             newConfig.capabilities=app.config.capabilities; // must survive a revision too, not just the initial generation
@@ -314,15 +320,16 @@ export class Store {
     return {id:app.generation.id,status:'cancelled'};
   }
   /** Persisted plan (what the Plan tab shows, survives reloads). Text and/or status may be supplied; editing text alone reopens it as a draft. */
-  setPlan(p,appId,{text,status,capabilities}={}){
+  setPlan(p,appId,{text,status,capabilities,style,accent}={}){
     const app=this.access(p,appId,true);
-    if(text===undefined&&status===undefined&&capabilities===undefined)fail(400,'Provide text, status and/or capabilities');
+    if(text===undefined&&status===undefined&&capabilities===undefined&&style===undefined&&accent===undefined)fail(400,'Provide text, status, capabilities and/or style');
     if(text!==undefined&&(typeof text!=='string'||!text.trim()||text.length>20000))fail(400,'Plan text must be 1–20000 characters');
     if(status!==undefined&&!PLAN_STATUSES.includes(status))fail(400,'status must be one of: '+PLAN_STATUSES.join(', '));
-    if(!app.plan&&text===undefined&&capabilities===undefined)fail(409,'This application has no plan yet');
+    if(!app.plan&&text===undefined&&capabilities===undefined&&style===undefined&&accent===undefined)fail(409,'This application has no plan yet');
     if(capabilities!==undefined)this.setCapabilities(p,app,capabilities);
+    if(style!==undefined||accent!==undefined)this.setStyle(p,app,style,accent);
     if(text!==undefined||status!==undefined||!app.plan)app.plan={text:text!==undefined?text.trim():app.plan?.text||`# ${app.config.title}\n\n${app.config.brief}`,status:status??(text!==undefined?'draft':app.plan?.status||'draft'),by:p.label,at:now()};
-    this.audit(app,'plan '+app.plan.status,p);this.save();return {...app.plan,capabilities:app.config.capabilities||[],kind:app.config.kind||null};
+    this.audit(app,'plan '+app.plan.status,p);this.save();return {...app.plan,capabilities:app.config.capabilities||[],kind:app.config.kind||null,style:app.config.style||null,accent:app.config.accent};
   }
   /** Change what the application is meant to be able to do. Goes through definition() like any config change; the kind follows the
    * capabilities (unless it is auto/classic), a revision is bumped so a stale build can't be published, and the new capabilities take
@@ -336,6 +343,21 @@ export class Store {
     if(['interactive','knowledge','application'].includes(next.kind))next.kind=deriveKind(ids);
     if(next.tier==='app'){const envRefs=deriveEnvRefs(ids);if(Object.keys(envRefs).length)next.envRefs=envRefs;else delete next.envRefs;}
     app.config=definition(next);app.revision++;this.audit(app,'capabilities changed: '+(ids.join(', ')||'none'),p);
+  }
+  /** Change the look & feel (style preset/theme/density/layout) and/or accent. Goes through definition() (so bad values are a 400),
+   * bumps the revision so a stale build can't be published, and never regenerates: a static app just rebuilds with the new kit,
+   * an app-tier app gets its pac-ui.css/pac-ui.json rewritten in place. */
+  setStyle(p,app,style,accent){
+    if(app.generation?.status==='generating')fail(409,'Wait for generation to finish (or stop it) before changing the style');
+    if(style!==undefined&&(!style||typeof style!=='object'||Array.isArray(style)))fail(400,'style must be an object');
+    const next=structuredClone(app.config);
+    if(style!==undefined)next.style={...(next.style||{}),...style};
+    if(accent!==undefined)next.accent=accent;
+    let config;try{config=definition(next);}catch(e){fail(400,e.message);}
+    if(JSON.stringify(config.style)===JSON.stringify(app.config.style)&&config.accent===app.config.accent)return;
+    app.config=config;app.revision++;
+    if(config.tier==='app'&&config.sourcePath)writeKitFiles(config.sourcePath,{style:config.style,accentHex:kitBrand.accentPalette()[config.accent]});
+    this.audit(app,'style changed: '+Object.values(config.style||{}).join('/')+' · '+config.accent,p);
   }
   upload(p,appId,input){
     const app=this.access(p,appId);

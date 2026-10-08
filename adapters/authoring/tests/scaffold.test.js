@@ -39,3 +39,18 @@ test('SCAFFOLD-005 rejects a path that escapes the workdir (e.g. "../") before e
     assert.equal(existsSync(join(workdir, '..', 'escape.txt')), false);
   } finally { rmSync(workdir, { recursive: true, force: true }); }
 });
+
+test('SCAFFOLD-manifest deletes only files from the previous manifest that the new output lacks, never host files', async () => {
+  const { readFileSync, writeFileSync } = await import('node:fs');
+  const workdir = mkdtempSync(join(tmpdir(), 'pac-scaffold-'));
+  try {
+    scaffold({ kind: 'application', files: { Dockerfile: 'FROM a', 'old.js': '1', 'keep.js': '1' } }, workdir);
+    writeFileSync(join(workdir, 'user.txt'), 'mine'); writeFileSync(join(workdir, 'pac-ui.css'), 'kit');
+    scaffold({ kind: 'application', files: { Dockerfile: 'FROM b', 'keep.js': '2', 'pac-ui.css': 'model attempt' } }, workdir);
+    assert.equal(existsSync(join(workdir, 'old.js')), false);
+    assert.equal(readFileSync(join(workdir, 'keep.js'), 'utf8'), '2');
+    assert.equal(readFileSync(join(workdir, 'user.txt'), 'utf8'), 'mine');
+    assert.equal(readFileSync(join(workdir, 'pac-ui.css'), 'utf8'), 'kit'); // model cannot overwrite host file
+    assert.deepEqual(JSON.parse(readFileSync(join(workdir, '.pac-manifest.json'), 'utf8')).files, ['Dockerfile', 'keep.js']);
+  } finally { rmSync(workdir, { recursive: true, force: true }); }
+});

@@ -4,6 +4,7 @@ import { randomBytes,timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Store,DemoError } from './store.js';
+import { listFiles,readFile,saveFile,deleteFile,renameFile,FILE_ROUTE_BODY_LIMIT } from './files.js';
 import { createBuilder } from './builders.js';
 import { render,injectBriefings,escape,KINDS,REPO_MODES } from './definition.js';
 import { graduationBundle } from './archive.js';
@@ -19,12 +20,15 @@ import { principalFromProxyHeaders } from './proxy-auth.js';
 import { adminOverview,adminServices,adminLlmTest,adminOrchestrationTest,adminAgentTest } from './admin.js';
 import { appChat,appChatStream } from './chat.js';
 import { draftApplication } from './draft.js';
+import { STYLE_PRESETS,STYLE_THEMES,STYLE_DENSITIES,STYLE_LAYOUTS,normalizeStyle } from './style-options.js';
+import { buildKitCss } from './ui-kit.js';
 
 const equal=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const brand=loadBrand();
 // Exact request path -> file under demo/web/. The ONLY way a /web file is reachable: no prefix matching, so nothing here can be traversed out of.
 const STATIC_FILES=Object.freeze({'/':'index.html','/ui.js':'ui.js','/graduation-ui.js':'graduation-ui.js','/style.css':'style.css','/admin.html':'admin.html','/admin.js':'admin.js','/art.js':'art.js',
-  '/vendor/marked.min.js':'vendor/marked.min.js','/vendor/purify.min.js':'vendor/purify.min.js','/vendor/LICENSE-marked.txt':'vendor/LICENSE-marked.txt','/vendor/LICENSE-purify.txt':'vendor/LICENSE-purify.txt'});
+  '/vendor/marked.min.js':'vendor/marked.min.js','/vendor/purify.min.js':'vendor/purify.min.js','/vendor/LICENSE-marked.txt':'vendor/LICENSE-marked.txt','/vendor/LICENSE-purify.txt':'vendor/LICENSE-purify.txt',
+  '/code-ui.js':'code-ui.js','/vendor/codemirror.min.js':'vendor/codemirror.min.js','/vendor/LICENSE-codemirror.txt':'vendor/LICENSE-codemirror.txt'});
 // `kind` and `template` are dual-accept (see definition.js): a caller supplies exactly one.
 // `kind` picks a real artifact type -- interactive/knowledge/application, or "auto" to let the
 // model decide -- and pairs with tier "intent" (no source yet; generate_application produces
@@ -128,6 +132,16 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         res.setHeader('Content-Type','text/javascript');
         return res.end(readFileSync(new URL('./capabilities.js',import.meta.url),'utf8'));
       }
+      if(req.method==='GET'&&path==='/style-options.js'){res.setHeader('Content-Type','text/javascript');return res.end(readFileSync(new URL('./style-options.js',import.meta.url),'utf8'));}
+      if(req.method==='GET'&&path==='/ui-kit.css'){
+        const q=url.searchParams,s={};
+        for(const [k,list] of [['preset',STYLE_PRESETS],['theme',STYLE_THEMES],['density',STYLE_DENSITIES],['layout',STYLE_LAYOUTS]]){const v=q.get(k);if(v===null)continue;if(!list.some(x=>x.id===v))throw new DemoError(400,`Unknown ${k}: ${v}`);s[k]=v;}
+        const acc=q.get('accent'),pal=brand.accentPalette();let accentHex;
+        if(acc!==null){accentHex=Object.hasOwn(pal,acc)?pal[acc]:/^#?[0-9a-fA-F]{6}$/.test(acc)?'#'+acc.replace('#',''):null;if(!accentHex)throw new DemoError(400,'Unknown accent');}
+        const scope=q.get('scope');if(scope!==null&&!/^[.#]?[A-Za-z0-9_-]{1,40}$/.test(scope))throw new DemoError(400,'Invalid scope');
+        res.setHeader('Content-Type','text/css');res.setHeader('Cache-Control','public, max-age=300');
+        return res.end(buildKitCss({style:normalizeStyle(s),accentHex,brand,scope:scope||undefined}));
+      }
       if(req.method==='GET'&&Object.hasOwn(STATIC_FILES,path)){
         const file=STATIC_FILES[path];res.setHeader('Content-Type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':file.endsWith('.txt')?'text/plain; charset=utf-8':'text/javascript');
         let content;try{content=readFileSync(new URL('./web/'+file,import.meta.url),'utf8');}catch(e){if(e.code==='ENOENT')throw new DemoError(404,'Not found');throw e;} // an allowlisted asset the front end hasn't shipped yet is a 404, not a crash
@@ -160,7 +174,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
       let body={};
       if(req.method==='POST'){
         if(!req.headers['content-type']?.startsWith('application/json'))throw new DemoError(415,'JSON required');
-        const parts=[];let size=0;for await(const part of req){size+=part.length;if(size>400000)throw new DemoError(413,'Request too large');parts.push(part);}
+        const parts=[];let size=0;for await(const part of req){size+=part.length;if(size>(/^\/api\/apps\/[a-f0-9-]+\/file(?:-delete|-rename)?$/.test(path)?FILE_ROUTE_BODY_LIMIT:400000))throw new DemoError(413,'Request too large');parts.push(part);}
         try{body=JSON.parse(Buffer.concat(parts).toString());}catch{throw new DemoError(400,'Invalid JSON');}
         if(!body||typeof body!=='object'||Array.isArray(body))throw new DemoError(400,'JSON object required');
       }
@@ -288,7 +302,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST'){const {plan,...cfg}=body;return json(201,store.view(principal,store.create(principal,cfg,{plan}).id));}
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan|preview-start|preview-stop|preview-status|preview-logs))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan|preview-start|preview-stop|preview-status|preview-logs|files|file|file-delete|file-rename))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -315,6 +329,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(action==='deployment-status')return json(200,await store.deploymentStatus(principal,id));
         if(action==='deployment-logs')return json(200,await store.deploymentLogs(principal,id,Number(url.searchParams.get('tail'))||100));
         if(action==='invites')return json(200,store.listInvites(principal,id));
+        if(action==='files')return json(200,listFiles(store,principal,id));
+        if(action==='file')return json(200,readFile(store,principal,id,url.searchParams.get('path')));
       }
       // DELETE is archive, not purge -- soft, reversible, hides the app from list() and
       // nothing else. Deliberately only reachable on the bare app path (no action suffix);
@@ -327,7 +343,10 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'build':return json(202,store.startBuild(principal,id));
         case 'generate':return json(202,await store.startGeneration(principal,id,{changeRequest:body.changeRequest,plan:body.plan}));
         case 'generate/cancel':return json(200,store.cancelGeneration(principal,id));
-        case 'plan':return json(200,store.setPlan(principal,id,{text:body.text,status:body.status,capabilities:body.capabilities}));
+        case 'plan':return json(200,store.setPlan(principal,id,{text:body.text,status:body.status,capabilities:body.capabilities,style:body.style,accent:body.accent}));
+        case 'file':return json(200,saveFile(store,principal,id,body));
+        case 'file-delete':return json(200,deleteFile(store,principal,id,body));
+        case 'file-rename':return json(200,renameFile(store,principal,id,body));
         case 'rollback':return json(200,store.rollback(principal,id,body.release));
         case 'documents':store.upload(principal,id,body);break;
         case 'comments':store.comment(principal,id,body.text);break;
@@ -350,7 +369,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         default:throw new DemoError(404,'Not found');
       }
       return json(200,store.view(principal,id));
-    }catch(error){json(error.status||400,{error:error.message});}
+    }catch(error){json(error.status||400,{error:error.message,...(error.issues?{issues:error.issues}:{})});}
   });
   server.requestTimeout=15000;server.headersTimeout=10000;
   return {server,store};

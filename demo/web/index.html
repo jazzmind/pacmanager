@@ -23,6 +23,11 @@
 <symbol id="icon-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
 <symbol id="icon-arrow-right" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
 <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></symbol>
+<symbol id="icon-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></symbol>
+<symbol id="icon-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="icon-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></symbol>
+<symbol id="icon-file-plus" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></symbol>
 </defs></svg>
 <section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A studio for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Studio access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open studio ↗</button></form><small>Local demo · Synthetic business data only</small></section>
 <div id="workspace" hidden>
@@ -65,7 +70,7 @@
 </section>
 <section id="detail" hidden>
 <div class="detail-bar">
-  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button><button id="plan-tab" hidden>Plan<span class="tab-dot" id="plan-dot" hidden></span></button></div>
+  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button><button id="plan-tab" hidden>Plan<span class="tab-dot" id="plan-dot" hidden></span></button><button id="code-tab">Code</button></div>
   <button id="status" class="badge"></button><button id="gen-stop" class="stop-btn" hidden><svg class="icon"><use href="#icon-stop"/></svg>Stop</button>
   <a id="open-preview" target="_blank" rel="noopener">Open<svg class="icon"><use href="#icon-external"/></svg></a>
 </div>
@@ -86,7 +91,17 @@
   </div>
   <div class="canvas plan-view" id="plan-view" hidden>
     <div class="plan-bar"><div class="plan-chips"><span class="plan-chip" id="plan-status"></span><small id="plan-meta"></small></div><div class="plan-actions"><button id="plan-build" class="primary"><svg class="icon"><use href="#icon-play"/></svg>Build this plan</button><button id="plan-edit" class="ghost"><svg class="icon"><use href="#icon-pencil"/></svg>Edit</button><button id="plan-discard" hidden class="ghost danger-item"><svg class="icon"><use href="#icon-x"/></svg>Discard</button></div></div>
-    <div class="plan-scroll"><div class="plan-caps cmp-block" id="plan-caps"></div><article class="md plan-body" id="plan-body"></article><div class="plan-editor" id="plan-editor" hidden><textarea id="plan-text" aria-label="Plan (markdown)" maxlength="20000"></textarea><div class="plan-editor-actions"><button id="plan-save" class="primary">Save plan</button><button id="plan-cancel" class="ghost">Cancel</button></div></div></div>
+    <div class="plan-scroll"><div class="plan-caps cmp-block" id="plan-caps"></div><div class="plan-caps plan-look cmp-block" id="plan-look"></div><article class="md plan-body" id="plan-body"></article><div class="plan-editor" id="plan-editor" hidden><textarea id="plan-text" aria-label="Plan (markdown)" maxlength="20000"></textarea><div class="plan-editor-actions"><button id="plan-save" class="primary">Save plan</button><button id="plan-cancel" class="ghost">Cancel</button></div></div></div>
+  </div>
+  <div class="canvas code-view" id="code-view" hidden>
+    <div id="code-empty" class="code-empty" hidden></div>
+    <div class="code-bar"><span class="code-path" id="code-path"></span><i class="code-dot" id="code-dot" hidden></i><small class="code-lang" id="code-lang"></small><span class="code-actions"><button type="button" id="code-save" class="ghost" title="Save (Cmd/Ctrl+S)">Save</button><button type="button" id="code-save-build" class="primary" title="Save, then rebuild"><svg class="icon"><use href="#icon-play"/></svg>Save &amp; rebuild</button></span></div>
+    <div class="code-body" id="code-body">
+      <aside class="code-tree"><div class="code-tree-tools"><button type="button" id="code-new" class="subtle" title="New file"><svg class="icon"><use href="#icon-file-plus"/></svg>New</button><button type="button" id="code-rename" class="subtle" title="Rename file"><svg class="icon"><use href="#icon-pencil"/></svg>Rename</button><button type="button" id="code-delete" class="subtle" title="Delete file"><svg class="icon"><use href="#icon-trash"/></svg>Delete</button></div>
+        <form id="code-prompt" class="code-prompt" hidden><label id="code-prompt-label" for="code-prompt-input"></label><input id="code-prompt-input" maxlength="200" autocomplete="off" spellcheck="false"><div class="code-prompt-actions"><button type="submit" id="code-prompt-ok" class="primary">OK</button><button type="button" id="code-prompt-cancel" class="ghost">Cancel</button></div></form>
+        <div class="code-tree-list" id="code-tree-list" role="tree"></div></aside>
+      <div class="code-main"><div class="code-lock" id="code-lock" hidden></div><div class="code-notice" id="code-notice" role="status" hidden></div><div class="code-editor" id="code-editor"></div><div class="code-issues" id="code-issues" role="alert" hidden></div></div>
+    </div>
   </div>
   <div class="chat-resize" id="chat-resize" title="Drag to resize · double-click to reset"></div>
   <aside class="chat-panel" id="chat-panel">
@@ -95,8 +110,8 @@
     <div class="chat-cards" id="chat-cards"></div>
     <div class="chat-modes-row">
       <div class="chat-modes" id="chat-modes"><button type="button" data-mode="chat" class="selected">Chat</button><button type="button" data-mode="plan">Plan</button><button type="button" data-mode="notes">Notes</button><button type="button" data-mode="log">Log</button></div>
-      <button type="button" id="chat-expand" class="chat-expand-btn" title="Expand chat width" aria-label="Expand chat width"><svg class="icon"><use href="#icon-expand"/></svg></button>
-      <button type="button" id="chat-collapse" class="chat-expand-btn" title="Collapse chat" aria-label="Collapse chat"><svg class="icon"><use href="#icon-panel-right"/></svg></button>
+      <button type="button" id="chat-expand" class="chat-icon-btn chat-expand-btn" title="Expand chat width" aria-label="Expand chat width"><svg class="icon"><use href="#icon-expand"/></svg></button>
+      <button type="button" id="chat-collapse" class="chat-icon-btn chat-collapse-btn" title="Collapse chat" aria-label="Collapse chat"><svg class="icon"><use href="#icon-panel-right"/></svg></button>
     </div>
     <div class="chat-thread" id="chat-thread" aria-live="polite"></div>
     <form id="chat-form" class="chat-form"><div class="composer-row"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-paperclip"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Ask about this app…"></textarea><button type="button" id="chat-stop" class="ghost" aria-label="Stop" title="Stop" hidden><svg class="icon"><use href="#icon-stop"/></svg></button><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></div><small class="chat-hint">Shift+Enter for a new line</small></form>

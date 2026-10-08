@@ -4,6 +4,8 @@ import { existsSync, statSync } from 'node:fs';
 import { treeDigest } from './tree-digest.js';
 import { loadBrand } from './brand.js';
 import { loadCatalog } from './services.js';
+import { buildKitCss } from './ui-kit.js';
+import { STYLE_PRESETS, STYLE_THEMES, STYLE_DENSITIES, STYLE_LAYOUTS, DEFAULT_STYLE } from './style-options.js';
 import { CAPABILITIES, CAPABILITY_IDS, expandCapabilities, deriveKind } from './capabilities.js';
 
 // Single accent palette, sourced from the active brand pack (PAC_BRAND_PACK, else the bundled
@@ -94,6 +96,7 @@ export function sourceIssues(source) {
 
 function compileStatic(config) {
   const { title, accent: accentKey, source } = config;
+  const style = config.style || DEFAULT_STYLE;
   const issues = staticSafetyIssues(source);
   if (issues.length) throw new Error('Static source rejected: ' + issues.join('; '));
   const accent = accentPalette()[accentKey];
@@ -103,7 +106,7 @@ function compileStatic(config) {
   const assets = Object.fromEntries(files.filter(p => p.endsWith('.json') || p.endsWith('.svg')).map(p => [p, source[p]]));
   const body = source['index.html'];
   const scriptBlock = `window.PAC_ASSETS=${JSON.stringify(assets)};\n(function(){\n'use strict';\n${js}\n})();`;
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title><style>*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;accent-color:${accent}}${css}</style></head><body>${body}<script>${scriptBlock}</script></body></html>`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title><style>${buildKitCss({ style, accentHex: accent, brand })}${css}</style></head><body>${body}<script>${scriptBlock}</script></body></html>`;
   const canonicalSource = Object.fromEntries(files.map(p => [p, source[p]]));
   return {
     config, html,
@@ -111,7 +114,7 @@ function compileStatic(config) {
     // no `kind` (undefined), and JSON.stringify drops undefined object properties entirely, so
     // this produces a byte-identical digest to before `kind` existed. Only a new kind-based
     // record's digest actually includes it. See definition()'s identical ordering discipline.
-    sourceDigest: sha(JSON.stringify({ title, brief: config.brief, template: config.template, accent: accentKey, tier: 'static', source: canonicalSource, kind: config.kind })),
+    sourceDigest: sha(JSON.stringify({ title, brief: config.brief, template: config.template, accent: accentKey, tier: 'static', source: canonicalSource, kind: config.kind, style: config.style })),
     htmlDigest: sha(html),
     scriptHashes: [csphash(scriptBlock)],
     checks: [
@@ -240,6 +243,20 @@ function validateCapabilities(value) {
   return expandCapabilities(value).sort();
 }
 
+const STYLE_SETS = { preset: STYLE_PRESETS, theme: STYLE_THEMES, density: STYLE_DENSITIES, layout: STYLE_LAYOUTS };
+/** Strict form of normalizeStyle: unknown keys/values are rejected (400), absent fields default. */
+function validateStyle(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('style must be an object with preset, theme, density and layout');
+  const out = { ...DEFAULT_STYLE };
+  for (const k of Object.keys(value)) if (!(k in STYLE_SETS)) throw new Error(`Unsupported style field: ${k}`);
+  for (const [k, list] of Object.entries(STYLE_SETS)) {
+    if (value[k] === undefined) continue;
+    if (!list.some(x => x.id === value[k])) throw new Error(`style.${k} must be one of: ${list.map(x => x.id).join(', ')}`);
+    out[k] = value[k];
+  }
+  return out;
+}
+
 export function definition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Application definition required');
   const tier = value.tier || 'template';
@@ -251,7 +268,7 @@ export function definition(value) {
   // standing in for it. Only meaningful for a kind-based record: a legacy template-only record
   // has nothing to generate, so it must go straight to a real tier.
   if (tier === 'intent' && !hasKind) throw new Error('tier "intent" requires kind');
-  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier', 'repo', 'capabilities',
+  const allowed = ['title', 'brief', 'template', 'kind', 'accent', 'tier', 'repo', 'capabilities', 'style',
     ...(tier === 'static' ? ['source'] : []),
     ...(tier === 'app' ? APP_TIER_FIELDS : [])];
   for (const k of Object.keys(value)) if (!allowed.includes(k)) throw new Error(`Unsupported definition field: ${k}`);
@@ -287,6 +304,7 @@ export function definition(value) {
     if (hasKind && ['interactive', 'knowledge', 'application'].includes(value.kind) && result.capabilities.length && deriveKind(result.capabilities) !== value.kind)
       throw new Error(`kind "${value.kind}" does not match the selected capabilities, which require kind "${deriveKind(result.capabilities)}"`);
   }
+  if (value.style !== undefined) result.style = validateStyle(value.style);
   return result;
 }
 
