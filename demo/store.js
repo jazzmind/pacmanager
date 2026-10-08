@@ -4,7 +4,7 @@ import { randomUUID,randomBytes } from 'node:crypto';
 import { definition,sha,compile,serviceCatalog,sourceIssues,SOURCE_LIMITS,FORBIDDEN_LABELS } from './definition.js';
 import { graduationFiles } from './archive.js';
 import { validateAuthoringOutput,AUTHORING_KINDS } from '../src/adapters.js';
-import { deriveEnvRefs } from './capabilities.js';
+import { deriveEnvRefs,deriveKind,expandCapabilities } from './capabilities.js';
 import { deriveGraduationResources } from './services.js';
 
 const AUTHORING_PROBE_TTL_MS=Number(process.env.PAC_AUTHORING_PROBE_TTL_MS||300000);
@@ -88,7 +88,7 @@ export class Store {
         createdAt:a.createdAt,archivedAt:a.archivedAt||null,
         lastDeployment:a.deployments?.length?a.deployments[a.deployments.length-1].status:null}));
   }
-  create(p,config){
+  create(p,config,{plan}={}){
     // Both 'owner' (admin) and 'user' (any authenticated tenant member, via proxy-auth) may
     // create their own applications; 'collaborator' (a scoped guest on someone else's single
     // app) may not. An 'owner' principal from the bearer-token path has no email, so its
@@ -96,6 +96,8 @@ export class Store {
     if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
     const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null,chatLog:[],plan:null};
+    // Every application starts with a plan: the instructions it was created from, editable (text AND capabilities) in the Plan tab.
+    const text=typeof plan==='string'&&plan.trim()?plan.trim().slice(0,20000):`# ${app.config.title}\n\n${app.config.brief}`;app.plan={text,status:'draft',by:p.label,at:now()};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
   }
   // Email-based sharing (distinct from the pre-existing label-based single-use invite
@@ -312,14 +314,28 @@ export class Store {
     return {id:app.generation.id,status:'cancelled'};
   }
   /** Persisted plan (what the Plan tab shows, survives reloads). Text and/or status may be supplied; editing text alone reopens it as a draft. */
-  setPlan(p,appId,{text,status}={}){
+  setPlan(p,appId,{text,status,capabilities}={}){
     const app=this.access(p,appId,true);
-    if(text===undefined&&status===undefined)fail(400,'Provide text and/or status');
+    if(text===undefined&&status===undefined&&capabilities===undefined)fail(400,'Provide text, status and/or capabilities');
     if(text!==undefined&&(typeof text!=='string'||!text.trim()||text.length>20000))fail(400,'Plan text must be 1–20000 characters');
     if(status!==undefined&&!PLAN_STATUSES.includes(status))fail(400,'status must be one of: '+PLAN_STATUSES.join(', '));
-    if(!app.plan&&text===undefined)fail(409,'This application has no plan yet');
-    app.plan={text:text!==undefined?text.trim():app.plan.text,status:status??(text!==undefined?'draft':app.plan.status),by:p.label,at:now()};
-    this.audit(app,'plan '+app.plan.status,p);this.save();return app.plan;
+    if(!app.plan&&text===undefined&&capabilities===undefined)fail(409,'This application has no plan yet');
+    if(capabilities!==undefined)this.setCapabilities(p,app,capabilities);
+    if(text!==undefined||status!==undefined||!app.plan)app.plan={text:text!==undefined?text.trim():app.plan?.text||`# ${app.config.title}\n\n${app.config.brief}`,status:status??(text!==undefined?'draft':app.plan?.status||'draft'),by:p.label,at:now()};
+    this.audit(app,'plan '+app.plan.status,p);this.save();return {...app.plan,capabilities:app.config.capabilities||[],kind:app.config.kind||null};
+  }
+  /** Change what the application is meant to be able to do. Goes through definition() like any config change; the kind follows the
+   * capabilities (unless it is auto/classic), a revision is bumped so a stale build can't be published, and the new capabilities take
+   * effect in the artifact on the next generation (build the plan). */
+  setCapabilities(p,app,capabilities){
+    if(app.generation?.status==='generating')fail(409,'Wait for generation to finish (or stop it) before changing capabilities');
+    if(!Array.isArray(capabilities))fail(400,'capabilities must be an array of ids');
+    const next=structuredClone(app.config),ids=expandCapabilities(capabilities);
+    if(JSON.stringify(ids)===JSON.stringify(app.config.capabilities||[]))return;
+    next.capabilities=ids;
+    if(['interactive','knowledge','application'].includes(next.kind))next.kind=deriveKind(ids);
+    if(next.tier==='app'){const envRefs=deriveEnvRefs(ids);if(Object.keys(envRefs).length)next.envRefs=envRefs;else delete next.envRefs;}
+    app.config=definition(next);app.revision++;this.audit(app,'capabilities changed: '+(ids.join(', ')||'none'),p);
   }
   upload(p,appId,input){
     const app=this.access(p,appId);

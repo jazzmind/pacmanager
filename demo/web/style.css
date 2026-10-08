@@ -478,3 +478,6 @@ kbd{font:600 10px ui-monospace,monospace;border:1px solid var(--pac-line);border
 .live-logs{margin:0;padding:12px 14px;max-height:35%;overflow:auto;background:var(--pac-ink,#111);color:var(--pac-surface,#eee);font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap}
 @keyframes pulse{50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.live-state.starting::before{animation:none}}
+
+.plan-caps{padding:16px 24px 0;margin:0}
+.plan-caps .hint{margin:10px 0 0}
