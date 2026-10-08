@@ -4,7 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import { treeDigest } from './tree-digest.js';
 import { loadBrand } from './brand.js';
 import { loadCatalog } from './services.js';
-import { CAPABILITY_IDS, expandCapabilities } from './capabilities.js';
+import { CAPABILITIES, CAPABILITY_IDS, expandCapabilities, deriveKind } from './capabilities.js';
 
 // Single accent palette, sourced from the active brand pack (PAC_BRAND_PACK, else the bundled
 // default). Previously duplicated verbatim in compileStatic() and compile() -- see
@@ -236,6 +236,7 @@ function validateRepo(value) {
 function validateCapabilities(value) {
   if (!Array.isArray(value)) throw new Error('capabilities must be an array of capability ids');
   for (const id of value) if (!CAPABILITY_IDS.includes(id)) throw new Error(`Unknown capability: ${id}`);
+  for (const id of value) if (CAPABILITIES.find(c => c.id === id).group === 'future') throw new Error(`Capability "${id}" is not available yet and cannot be selected`);
   return expandCapabilities(value).sort();
 }
 
@@ -279,7 +280,13 @@ export function definition(value) {
   if (repo) result.repo = repo;
   // Appended last of all, same discipline as repo/kind above -- a record predating the
   // capability picker keeps its exact key order and digest.
-  if (value.capabilities !== undefined) result.capabilities = validateCapabilities(value.capabilities);
+  if (value.capabilities !== undefined) {
+    result.capabilities = validateCapabilities(value.capabilities);
+    // The picker derives kind from capabilities (deriveKind); a concrete kind that disagrees would build the wrong thing (e.g. "interactive" with a database
+    // capability has no server). "auto" and classic (no kind) defer, and an empty list says nothing about kind, so neither is checked.
+    if (hasKind && ['interactive', 'knowledge', 'application'].includes(value.kind) && result.capabilities.length && deriveKind(result.capabilities) !== value.kind)
+      throw new Error(`kind "${value.kind}" does not match the selected capabilities, which require kind "${deriveKind(result.capabilities)}"`);
+  }
   return result;
 }
 

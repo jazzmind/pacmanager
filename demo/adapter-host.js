@@ -11,17 +11,22 @@ import { spawn } from 'node:child_process';
  * (found live: a real deploy failed because the adapter process couldn't see
  * DEPLOYKIT_TOKEN, and fell back to a default that happened to look like a different
  * failure). The envelope on stdin — not the environment — is the untrusted-input boundary. */
-export function runAdapter(command, args, input, timeoutMs) {
+export function runAdapter(command, args, input, timeoutMs, { signal } = {}) {
   return new Promise((resolve, reject) => {
+    const cancelled = () => Object.assign(new Error('Adapter cancelled'), { cancelled: true });
+    if (signal?.aborted) return reject(cancelled());
     const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
     let output = '', error = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Adapter timed out')); }, timeoutMs);
+    // Cancellation (a user pressing Stop): SIGKILL, same as the deadline -- the adapter is mid-model-call and has nothing worth flushing.
+    const onAbort = () => { clearTimeout(timer); child.kill('SIGKILL'); reject(cancelled()); };
+    signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', b => { output += b; if (output.length > 2_000_000) { child.kill(); reject(new Error('Adapter output too large')); } });
     child.stderr.on('data', b => { error = (error + b).slice(-4000); });
-    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('error', e => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(e); });
     child.stdin.on('error', () => {});
     child.on('close', code => {
-      clearTimeout(timer);
+      clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
       if (code !== 0) return reject(new Error(error || `Adapter exited with code ${code}`));
       try { resolve(JSON.parse(output)); } catch { reject(new Error('Invalid adapter response (expected one JSON object on stdout)')); }
     });

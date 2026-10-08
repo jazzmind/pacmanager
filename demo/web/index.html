@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{PAC_PRODUCT_NAME}} · Create with confidence</title>
-<link rel="icon" href="/brand/favicon"><link rel="stylesheet" href="/brand.css"><link rel="stylesheet" href="/style.css"><script type="module" src="/ui.js"></script></head><body>
+<link rel="icon" href="/brand/favicon"><link rel="stylesheet" href="/brand.css"><link rel="stylesheet" href="/style.css"><script src="/vendor/marked.min.js"></script><script src="/vendor/purify.min.js"></script><script type="module" src="/ui.js"></script></head><body>
 <svg hidden aria-hidden="true" id="icons"><defs>
 <symbol id="icon-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
 <symbol id="icon-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
@@ -16,6 +16,13 @@
 <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
 <symbol id="icon-sparkle" viewBox="0 0 24 24"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z"/><path d="M19 15l.8 2.4L22 18l-2.2.6L19 21l-.8-2.4L16 18l2.2-.6L19 15z"/></symbol>
 <symbol id="icon-expand" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></symbol>
+<symbol id="icon-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="icon-panel-right" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></symbol>
+<symbol id="icon-paperclip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+<symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+<symbol id="icon-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+<symbol id="icon-arrow-right" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
+<symbol id="icon-play" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></symbol>
 </defs></svg>
 <section id="login" class="login"><div class="brand">{{PAC_LOGO_HTML}}</div><p class="eyebrow">{{PAC_PRODUCT_TAGLINE}}</p><h1>A studio for<br>what comes next.</h1><p>Build useful applications. Bring your knowledge.<br>Give your team a place to work together.</p><form id="signin"><label>Studio access token<input id="token" type="password" required autocomplete="off" placeholder="Paste your local owner token"></label><button>Open studio ↗</button></form><small>Local demo · Synthetic business data only</small></section>
 <div id="workspace" hidden>
@@ -58,8 +65,8 @@
 </section>
 <section id="detail" hidden>
 <div class="detail-bar">
-  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button></div>
-  <button id="status" class="badge"></button>
+  <div class="segmented"><button id="draft" class="selected">Draft</button><button id="published">Published</button><button id="history">History</button><button id="plan-tab" hidden>Plan<span class="tab-dot" id="plan-dot" hidden></span></button></div>
+  <button id="status" class="badge"></button><button id="gen-stop" class="stop-btn" hidden><svg class="icon"><use href="#icon-stop"/></svg>Stop</button>
   <a id="open-preview" target="_blank" rel="noopener">Open<svg class="icon"><use href="#icon-external"/></svg></a>
 </div>
 <div class="workgrid">
@@ -71,33 +78,37 @@
     <div class="history-head"><span>Release history — select a version to preview it</span><button id="history-rollback" class="ghost" hidden><svg class="icon"><use href="#icon-undo"/></svg>Roll back to this version</button></div>
     <div class="history-body"><div class="release-list" id="release-history-full"></div><iframe id="history-preview" title="Historical release preview" sandbox=""></iframe></div>
   </div>
+  <div class="canvas plan-view" id="plan-view" hidden>
+    <div class="plan-bar"><div class="plan-chips"><span class="plan-chip" id="plan-status"></span><small id="plan-meta"></small></div><div class="plan-actions"><button id="plan-build" class="primary"><svg class="icon"><use href="#icon-play"/></svg>Build this plan</button><button id="plan-edit" class="ghost"><svg class="icon"><use href="#icon-pencil"/></svg>Edit</button><button id="plan-discard" class="ghost danger-item"><svg class="icon"><use href="#icon-x"/></svg>Discard</button></div></div>
+    <div class="plan-scroll"><article class="md plan-body" id="plan-body"></article><div class="plan-editor" id="plan-editor" hidden><textarea id="plan-text" aria-label="Plan (markdown)" maxlength="20000"></textarea><div class="plan-editor-actions"><button id="plan-save" class="primary">Save plan</button><button id="plan-cancel" class="ghost">Cancel</button></div></div></div>
+  </div>
   <div class="chat-resize" id="chat-resize" title="Drag to resize · double-click to reset"></div>
-  <aside class="chat-panel">
+  <aside class="chat-panel" id="chat-panel">
+    <button type="button" id="chat-handle" class="sheet-handle" aria-label="Toggle chat" aria-expanded="true"><span class="grip"></span><span class="sheet-title"><svg class="icon"><use href="#icon-chat"/></svg>Chat</span></button>
+    <button type="button" id="chat-rail" class="chat-rail" title="Open chat" aria-label="Open chat"><svg class="icon"><use href="#icon-chat"/></svg></button>
     <div class="chat-cards" id="chat-cards"></div>
     <div class="chat-modes-row">
       <div class="chat-modes" id="chat-modes"><button type="button" data-mode="chat" class="selected">Chat</button><button type="button" data-mode="plan">Plan</button><button type="button" data-mode="notes">Notes</button><button type="button" data-mode="log">Log</button></div>
       <button type="button" id="chat-expand" class="chat-expand-btn" title="Expand chat width" aria-label="Expand chat width"><svg class="icon"><use href="#icon-expand"/></svg></button>
+      <button type="button" id="chat-collapse" class="chat-expand-btn" title="Collapse chat" aria-label="Collapse chat"><svg class="icon"><use href="#icon-panel-right"/></svg></button>
     </div>
-    <div class="chat-thread" id="chat-thread"></div>
-    <form id="chat-form" class="chat-form"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-doc"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="2" maxlength="2000" placeholder="Ask a question about this app…"></textarea><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></form>
+    <div class="chat-thread" id="chat-thread" aria-live="polite"></div>
+    <form id="chat-form" class="chat-form"><div class="composer-row"><label class="chat-attach" title="Add a document (.txt, .md or .pdf, up to 256 KB)"><svg class="icon"><use href="#icon-paperclip"/></svg><input id="upload" type="file" accept=".txt,.md,.pdf" hidden></label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Ask about this app…"></textarea><button type="button" id="chat-stop" class="ghost" aria-label="Stop" title="Stop" hidden><svg class="icon"><use href="#icon-stop"/></svg></button><button id="chat-send" class="primary" aria-label="Send"><svg class="icon"><use href="#icon-send"/></svg></button></div><small class="chat-hint">Shift+Enter for a new line</small></form>
   </aside>
 </div>
 </section>
 </main>
 </div>
-<dialog id="editor"><form id="definition-form"><p class="eyebrow">FROM IDEA TO APPLICATION</p><h2 id="editor-title">What would you like to build?</h2>
-<div id="gallery" class="gallery"></div>
-<div id="editor-fields" hidden>
-  <button type="button" id="gallery-back" class="subtle">← Choose a different starting point</button>
-  <label>Application name<input id="app-title" required minlength="3" maxlength="80" placeholder="Claims team workspace"></label>
-  <label>Describe what your team needs<textarea id="brief" required minlength="10" maxlength="3000" placeholder="A clone of the arcade game Tapper, insurance themed. Or: help adjusters review synthetic claims, share guidance and discuss follow-ups."></textarea></label>
-  <label>Accent<select id="accent">{{PAC_ACCENT_OPTIONS}}</select></label>
-  <div id="capability-picker"><p class="eyebrow">WHAT SHOULD IT BE ABLE TO DO?</p><div id="capability-groups"></div></div>
-  <p class="hint" id="kind-derived"></p>
-  <p class="hint" id="editor-hint">Real, working source is generated for this brief — not a template with the title pasted in.</p>
-  <p class="hint warn" id="editor-authoring-warning" hidden>No AI connected yet — this saves as a draft. Ask your admin to set PAC_AUTHORING_ADAPTER, then generate it from here.</p>
-</div>
-<div class="dialog-actions"><button type="button" data-close="editor" class="subtle">Cancel</button><button id="save-definition" hidden>Save &amp; generate</button></div></form></dialog>
+<dialog id="composer" class="composer" aria-label="New application">
+  <div class="cmp-shell">
+    <header class="cmp-head"><span class="cmp-eyebrow"><svg class="icon"><use href="#icon-sparkle"/></svg>New application</span>
+      <ol class="stepper" id="cmp-stepper"><li data-step="1"><b>1</b><span>Idea</span></li><li data-step="2"><b>2</b><span>Draft</span></li><li data-step="3"><b>3</b><span>Confirm</span></li></ol>
+      <button type="button" id="cmp-close" class="subtle" aria-label="Close (Esc)"><svg class="icon"><use href="#icon-x"/></svg></button></header>
+    <div class="cmp-main" id="cmp-main"><div class="cmp-body" id="cmp-body"></div></div>
+    <footer class="cmp-foot" id="cmp-foot"></footer>
+  </div>
+  <select id="accent" hidden aria-hidden="true" tabindex="-1">{{PAC_ACCENT_OPTIONS}}</select>
+</dialog>
 <dialog id="connection"><p class="eyebrow">YOUR AUTHORING ASSISTANT</p><h2>Connect Claude through MCP.</h2><p>Start PAC Manager locally, then add this server to your client's MCP configuration. Replace both paths with absolute paths on your machine.</p><pre>{"mcpServers":{"pacmanager":{
   "command":"node",
   "args":["/absolute/pacmanager/demo/mcp-stdio.js"],
@@ -111,4 +122,4 @@
 <textarea id="invite-url" readonly hidden aria-label="Invitation URL"></textarea>
 <div id="invite-list"></div>
 <p class="hint">A shared/deployed app's access check trusts a forwarded identity header rather than an independent login — sound as a UX convenience today, not yet confirmed as a hard security boundary.</p>
-</dialog><div id="toast" role="status" hidden></div></body></html>
+</dialog><div id="toast" popover="manual" role="status" hidden></div></body></html>

@@ -15,6 +15,7 @@ const AUTHORING_MAX_ATTEMPTS=Math.min(5,Number(process.env.PAC_AUTHORING_MAX_ATT
 // run-pacmanager.sh points it at the same host-bind-mounted apps directory deploykit's
 // runtime adapter already materializes static/app-tier sources into (DEPLOYKIT_WORKDIR),
 // rather than pacmanager's own container-private data volume.
+const PLAN_STATUSES=['draft','executing','executed','discarded'];
 const GENERATED_APPS_DIR=process.env.PAC_GENERATED_APPS_DIR||null;
 
 export class DemoError extends Error {constructor(status,message){super(message);this.status=status;}}
@@ -41,7 +42,8 @@ export class Store {
     for(const app of this.state.apps)if(app.archivedAt===undefined){app.archivedAt=null;app.archivedBy=null;}
     for(const app of this.state.apps)if(!app.releases)app.releases=[];
     for(const app of this.state.apps)if(!app.chatLog)app.chatLog=[];
-    this.save();this.running=0;this.generating=0;this._authoringCache=null;
+    for(const app of this.state.apps)if(app.plan===undefined)app.plan=null;
+    this.save();this.running=0;this.generating=0;this.jobs=new Map();this._authoringCache=null;
   }
   save(){writeFileSync(this.file+'.tmp',JSON.stringify(this.state),{mode:0o600});renameSync(this.file+'.tmp',this.file);}
   tokenSession(principal){
@@ -79,7 +81,7 @@ export class Store {
     return this.state.apps.filter(a=>includeArchived||!a.archivedAt)
       .filter(a=>isAdmin||(p.kind==='collaborator'&&a.id===p.appId)||this.isAppOwner(p,a)||this.isSharedWith(p,a))
       .map(a=>({id:a.id,config:a.config,revision:a.revision,build:a.build?{status:a.build.status}:null,
-        generation:a.generation?{status:a.generation.status}:null,
+        generation:a.generation?{status:a.generation.status}:null,plan:a.plan?{status:a.plan.status}:null,
         published:Boolean(a.release),release:a.release?{number:a.release.number}:null,
         documents:a.documents.length,ownerEmail:a.ownerEmail||null,sharedWith:a.sharedWith||[],
         createdAt:a.createdAt,archivedAt:a.archivedAt||null,
@@ -92,7 +94,7 @@ export class Store {
     // apps get ownerEmail:null -- admin-visible only, same as before this pass existed.
     if(p.kind!=='owner'&&p.kind!=='user')fail(403,'Sign in to create an application');
     if(this.state.apps.length>=30)fail(429,'Demo supports up to 30 applications');
-    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null,chatLog:[]};
+    const app={id:id(),config:definition(config),revision:1,createdAt:now(),ownerEmail:p.email||null,sharedWith:[],documents:[],comments:[],binding:false,claims:[],briefings:[],build:null,generation:null,release:null,deployments:[],lastExport:null,audit:[],archivedAt:null,archivedBy:null,chatLog:[],plan:null};
     this.state.apps.push(app);this.audit(app,'created',p);this.save();return app;
   }
   // Email-based sharing (distinct from the pre-existing label-based single-use invite
@@ -195,7 +197,7 @@ export class Store {
    * the existing source is sent to the adapter as `currentSource` alongside it — a revision,
    * not a rewrite. A caller that genuinely wants to start over must reset tier to 'intent'
    * first (a separate, explicit, destructive step), not just omit changeRequest. */
-  async startGeneration(p,appId,{changeRequest}={}){
+  async startGeneration(p,appId,{changeRequest,plan}={}){
     const app=this.access(p,appId,true);
     const authoring=this.requireAuthoring();
     if(app.generation?.status==='generating')fail(409,'Generation already running');
@@ -205,28 +207,38 @@ export class Store {
     const isRevise=app.config.tier!=='intent'&&Boolean(app.config.source);
     if(isRevise&&(typeof changeRequest!=='string'||!changeRequest.trim()))fail(400,'Describe the change you want (changeRequest) to revise an existing artifact. To regenerate it from scratch instead, reset it to tier "intent" first — that discards the current source.');
     const currentSource=isRevise?app.config.source:null;
+    // An approved build plan: on a fresh app it rides along in the adapter's brief (never in the stored config.brief); on a revision
+    // it only links to app.plan when the changeRequest IS the drafted plan text, so the plan card can track executing/executed.
+    let planBrief='',linkedPlan=null;
+    if(!isRevise&&plan!==undefined&&plan!==null){
+      if(typeof plan!=='string'||!plan.trim()||plan.length>20000)fail(400,'plan must be 1–20000 characters');
+      app.plan=linkedPlan={text:plan.trim(),status:'executing',by:p.label,at:now()};planBrief='\n\nApproved build plan (follow it):\n'+plan.trim().slice(0,6000);
+    }else if(isRevise&&app.plan?.status==='draft'&&app.plan.text===changeRequest.trim()){app.plan.status='executing';linkedPlan=app.plan;}
     const kind=app.config.kind,job=id();
     this.generating++;
-    app.generation={id:job,status:'generating',requestedAtRevision:app.revision,attempts:[],logs:[{at:now(),text:`Requested ${isRevise?'revision':'generation'} · ${kind} · ${authoring.mode}`}]};
+    const abort=new AbortController(),signal=abort.signal;this.jobs.set(app.id,abort);
+    app.generation={id:job,status:'generating',requestedAtRevision:app.revision,startedAt:now(),currentAttempt:0,maxAttempts:AUTHORING_MAX_ATTEMPTS,attempts:[],logs:[{at:now(),text:`Requested ${isRevise?'revision':'generation'} · ${kind} · ${authoring.mode}`}]};
     this.save();
     const workdir=(kind==='application'||kind==='auto')?join(GENERATED_APPS_DIR||this.dataDir,'generated',app.id):null;
     if(workdir)mkdirSync(workdir,{recursive:true,mode:0o700});
     this.lastGeneration=(async()=>{
       let previousAttempt=null,lastIssues=[];
       for(let n=1;n<=AUTHORING_MAX_ATTEMPTS;n++){
+        if(signal.aborted)return; // cancelGeneration() already recorded the outcome
+        app.generation.currentAttempt=n;this.save();
         const startedAt=Date.now();
         const reject=(text,invalidateCache)=>{app.generation.attempts.push({n,issues:lastIssues});app.generation.logs.push({at:now(),text:`Attempt ${n}/${AUTHORING_MAX_ATTEMPTS}: ${text}`});if(invalidateCache)this._authoringCache=null;this.save();};
         let result;
         try{
           result=await authoring.generate({artifactId:app.id,principalId:p.label,payload:{
-            kind,title:app.config.title,brief:app.config.brief,accent:app.config.accent,
+            kind,title:app.config.title,brief:app.config.brief+planBrief,accent:app.config.accent,
             capabilities:app.config.capabilities||[],
             attempt:n,maxAttempts:AUTHORING_MAX_ATTEMPTS,
             constraints:{...SOURCE_LIMITS,forbidden:FORBIDDEN_LABELS,requireBriefingsMarker:kind==='knowledge'},
             workdir,previousAttempt,
             currentSource,changeRequest:isRevise?changeRequest.trim():null,
-          }});
-        }catch(error){lastIssues=[error.message];reject(`failed to reach the authoring adapter: ${error.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
+          },signal});
+        }catch(error){if(error.cancelled||signal.aborted)return;lastIssues=[error.message];reject(`failed to reach the authoring adapter: ${error.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
         // An adapter-reported error is usually a transport/credential problem (broken gateway,
         // missing key) that won't change between attempts -- hard-fail immediately rather than
         // burn the retry budget hitting the same dead thing 3 times. But found live: a model
@@ -235,6 +247,7 @@ export class Store {
         // validateAuthoringOutput's), and that failure mode is exactly what the repair loop
         // exists for -- it's the model's mistake, not the gateway's. The adapter marks which
         // kind of failure it is via `retriable`; only a genuinely non-retriable one skips ahead.
+        if(signal.aborted)return; // stopped while the adapter was replying -- discard, write nothing
         if(result.status==='error'){
           lastIssues=[result.message];
           if(!result.retriable){reject(`failed: ${result.message.slice(0,300)}`,true);app.generation.status='failed';this.save();return;}
@@ -280,8 +293,32 @@ export class Store {
       app.generation.status='failed';
       app.generation.logs.push({at:now(),text:`Generation failed after ${AUTHORING_MAX_ATTEMPTS} attempts.${lastIssues.length?' Last problem: '+lastIssues.join('; ')+'.':''} Nothing was saved — this artifact is still ungenerated.`});
       this.save();
-    })().finally(()=>{this.generating--;});
+    })().finally(()=>{
+      this.generating--;if(this.jobs.get(app.id)===abort)this.jobs.delete(app.id);
+      if(linkedPlan&&app.plan===linkedPlan&&linkedPlan.status==='executing'){linkedPlan.status=app.generation?.id===job&&app.generation.status==='ready'?'executed':'draft';this.save();}
+    });
     return {id:job,status:'generating'};
+  }
+  /** Stop a running generation: aborts the in-flight adapter call (the child is SIGKILLed) and the retry loop. Records the outcome
+   * itself, synchronously, so the response and the next poll agree; the job's own finally frees the slot exactly once. A cancelled
+   * job never reaches the config write, so the app is left exactly as it was. */
+  cancelGeneration(p,appId){
+    const app=this.access(p,appId,true),abort=this.jobs.get(app.id);
+    if(!abort||app.generation?.status!=='generating')fail(409,'Nothing is generating');
+    abort.abort();
+    app.generation.status='cancelled';app.generation.logs.push({at:now(),text:'Stopped by '+p.label});
+    this.audit(app,'generation.cancelled',p);this.save();
+    return {id:app.generation.id,status:'cancelled'};
+  }
+  /** Persisted plan (what the Plan tab shows, survives reloads). Text and/or status may be supplied; editing text alone reopens it as a draft. */
+  setPlan(p,appId,{text,status}={}){
+    const app=this.access(p,appId,true);
+    if(text===undefined&&status===undefined)fail(400,'Provide text and/or status');
+    if(text!==undefined&&(typeof text!=='string'||!text.trim()||text.length>20000))fail(400,'Plan text must be 1–20000 characters');
+    if(status!==undefined&&!PLAN_STATUSES.includes(status))fail(400,'status must be one of: '+PLAN_STATUSES.join(', '));
+    if(!app.plan&&text===undefined)fail(409,'This application has no plan yet');
+    app.plan={text:text!==undefined?text.trim():app.plan.text,status:status??(text!==undefined?'draft':app.plan.status),by:p.label,at:now()};
+    this.audit(app,'plan '+app.plan.status,p);this.save();return app.plan;
   }
   upload(p,appId,input){
     const app=this.access(p,appId);
@@ -299,7 +336,10 @@ export class Store {
   // way every other adapter call is). Read access only, same as comment() above: asking a
   // question or drafting a plan doesn't itself change anything, so a collaborator can too --
   // only the "Execute this plan" step later requires the owner-gated generate() call.
-  recordChat(p,appId,{mode,message,reply}){const app=this.access(p,appId);app.chatLog=[...(app.chatLog||[]),{id:id(),mode,message,reply,author:p.label,at:now()}].slice(-100);this.save();return app.chatLog.at(-1);}
+  // A completed Plan-mode reply also becomes the app's persisted plan (draft) -- unless one is mid-execution, which must not be clobbered.
+  recordChat(p,appId,{mode,message,reply,nonce}){const app=this.access(p,appId);app.chatLog=[...(app.chatLog||[]),{id:id(),mode,message,reply,author:p.label,at:now(),...(typeof nonce==='string'&&nonce&&nonce.length<=64?{nonce}:{})}].slice(-100);
+    if(mode==='plan'&&reply&&app.plan?.status!=='executing')app.plan={text:reply.slice(0,20000),status:'draft',by:p.label,at:now()};
+    this.save();return app.chatLog.at(-1);}
   recordBriefing(p,appId,input){
     const app=this.access(p,appId,true);
     if(typeof input.agentId!=='string'||!input.agentId.trim())fail(400,'agentId is required');
@@ -460,7 +500,7 @@ export class Store {
     // Explicit reshape, not a blind spread — attempts/logs never carry raw model output
     // (source text) today, only issue-string lists and counts, but this is the seam that
     // stops that changing silently as the generation object grows.
-    generation:app.generation?{status:app.generation.status,requestedAtRevision:app.generation.requestedAtRevision,revision:app.generation.revision||null,model:app.generation.model||null,rationale:app.generation.rationale||null,attempts:app.generation.attempts,logs:app.generation.logs}:null,
+    generation:app.generation?{id:app.generation.id,status:app.generation.status,startedAt:app.generation.startedAt||null,currentAttempt:app.generation.currentAttempt||0,maxAttempts:app.generation.maxAttempts||null,requestedAtRevision:app.generation.requestedAtRevision,revision:app.generation.revision||null,model:app.generation.model||null,rationale:app.generation.rationale||null,attempts:app.generation.attempts,logs:app.generation.logs}:null,
     release:app.release?{number:app.release.number,publishedAt:app.release.publishedAt,revision:app.release.revision}:null,
     // Light summary only -- each retained release embeds a full compiled result, so the UI's
     // rollback picker gets numbers/timestamps to choose from, not the payloads themselves.
