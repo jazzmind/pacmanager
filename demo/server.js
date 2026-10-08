@@ -80,6 +80,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
   }catch{}
   // Extra origins the same studio answers on (short host name vs FQDN, an ingress hostname...). Origin only, no path.
   for(const o of String(process.env.PAC_PUBLIC_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean))originAliases.add(o.replace(/\/+$/,''));
+  /** Where a deployed app answers: same host as the studio unless PAC_APPS_ORIGIN says otherwise, at PAC_APP_PATH_PREFIX+deployId. */
+  const appUrl=deployId=>`${(process.env.PAC_APPS_ORIGIN||origin).replace(/\/+$/,'')}${process.env.PAC_APP_PATH_PREFIX||'/'}${deployId}/`;
   /** SSE variant of POST /chat. Headers go out immediately so proxies/browsers open the stream; the exchange is persisted only once the model has finished
    * (event: done carries the stored entry). A client that disconnects first aborts the upstream call and persists nothing. */
   async function chatStream(principal,id,app,body,res){
@@ -286,7 +288,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         if(req.method==='GET')return json(200,store.list(principal,{includeArchived:url.searchParams.get('archived')==='1'}));
         if(req.method==='POST')return json(201,store.view(principal,store.create(principal,body).id));
       }
-      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan))?$/);
+      const match=path.match(/^\/api\/apps\/([a-f0-9-]+)(?:\/(preview|definition|build|generate|documents|comments|chat|binding|publish|invite|invites|share|unshare|export|deploy|deployment-status|deployment-logs|undeploy|graduate|unarchive|purge|rollback|generate\/cancel|plan|preview-start|preview-stop|preview-status|preview-logs))?$/);
       if(!match)throw new DemoError(404,'Not found');
       const [,id,action]=match,app=store.access(principal,id);
       if(req.method==='GET'){
@@ -299,7 +301,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
           if(releaseParam&&!historical)throw new DemoError(404,`Release ${releaseParam} is not retained (kept: last ${(app.releases||[]).length}).`);
           const result=historical?historical.result:url.searchParams.get('published')==='1'?app.release?.result:app.build?.status==='ready'?app.build.result:null;
           if(!result)throw new DemoError(409,'Build or publish this application first');
-          if(app.config.tier==='app')return json(200,{tier:'app',preview:'not available for the app tier — an app-tier release has no inline HTML to render; use deployment_status or deployment_logs once deployed',sourceDigest:result.sourceDigest,fileCount:result.fileCount,gitCommit:result.gitCommit,deployments:app.deployments});
+          if(app.config.tier==='app'){res.setHeader('Content-Type','text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+            return res.end('<!doctype html><meta charset=utf-8><body style="font:16px system-ui;margin:3rem;color:#333"><h2>This is a server application</h2><p>It runs as its own service, so it has no static page to render. Open <b>Start live preview</b> in the studio to run it and see it here.</p></body>');}
           const generated=app.config.tier==='static';
           const scriptSrc=generated&&result.scriptHashes?.length?result.scriptHashes.map(h=>`'sha256-${h}'`).join(' '):"'none'";
           res.setHeader('Content-Type','text/html');
@@ -307,6 +310,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
           return res.end(generated?injectBriefings(result.html,app.briefings):render(result.html,app));
         }
         if(action==='export'){store.access(principal,id,true);if(!app.release)throw new DemoError(409,'Publish first');const bundle=graduationBundle(app);store.recordExport(principal,id);res.setHeader('Content-Type','application/gzip');res.setHeader('Content-Disposition','attachment; filename="pac-graduation.tar.gz"');return res.end(bundle);}
+        if(action==='preview-status')return json(200,{...(await store.previewStatus(principal,id)),url:app.preview?appUrl(app.preview.deployId):null});
+        if(action==='preview-logs')return json(200,await store.previewLogs(principal,id,Number(url.searchParams.get('tail'))||100));
         if(action==='deployment-status')return json(200,await store.deploymentStatus(principal,id));
         if(action==='deployment-logs')return json(200,await store.deploymentLogs(principal,id,Number(url.searchParams.get('tail'))||100));
         if(action==='invites')return json(200,store.listInvites(principal,id));
@@ -336,6 +341,8 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'share':return json(200,{sharedWith:await store.shareWithEmail(principal,id,body.email)});
         case 'unshare':return json(200,{sharedWith:await store.unshareEmail(principal,id,body.email)});
         case 'deploy':return json(202,await store.deployApplication(principal,id));
+        case 'preview-start':return json(202,await store.startPreview(principal,id));
+        case 'preview-stop':return json(200,await store.stopPreview(principal,id));
         case 'undeploy':return json(200,await store.undeployApplication(principal,id));
         case 'graduate':{const {adapter,...options}=body;return json(200,await store.graduateApplication(principal,id,adapter,options));}
         case 'unarchive':store.unarchive(principal,id);break;

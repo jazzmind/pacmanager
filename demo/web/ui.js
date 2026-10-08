@@ -195,6 +195,29 @@ async function refresh(){
   if(selected&&apps.some(a=>a.id===selected)){app=await api('apps/'+selected);showView('detail');draw();}
   else{selected=null;app=null;renderHome();showView('home');}
 }
+// Live preview (app tier): start/stop the built source as its own deployment and frame it once it answers.
+let liveStatus=null,liveFor=null,liveLogs=false,liveBusy=false;
+async function pollLive(){
+  if(!app||app.config.tier!=='app'||!app.preview){liveStatus=null;return;}
+  try{liveStatus=await api('apps/'+app.id+'/preview-status');liveFor=app.id;}catch(error){liveStatus={status:'error',message:error.message};}
+  drawLive();
+}
+function drawLive(){
+  if(!app||app.config.tier!=='app')return;
+  const st=app.preview?(liveFor===app.id&&liveStatus?liveStatus:app.preview):null,s=st?.status||'none',stale=st&&st.revision!==undefined&&app.build&&st.revision!==app.build.revision&&s==='running';
+  const label={none:'Not running',starting:'Starting… building and launching the app',running:stale?'Running an older build':'Running',error:'Could not start'}[s]||s;
+  $('live-state').textContent=label;$('live-state').className='live-state '+s;
+  $('live-start').querySelector('span').textContent=s==='running'?'Restart with latest build':s==='error'?'Try again':'Start live preview';
+  $('live-start').hidden=s==='starting';$('live-start').disabled=liveBusy;$('live-stop').hidden=!(s==='running'||s==='error');$('live-logs-btn').hidden=s==='none';
+  const url=st?.url,show=s==='running'&&url;
+  $('live-frame').hidden=!show;if(show&&$('live-frame').dataset.src!==url){$('live-frame').dataset.src=url;$('live-frame').src=url;}if(!show){$('live-frame').removeAttribute('src');delete $('live-frame').dataset.src;}
+  $('live-open').hidden=!show;if(show)$('live-open').href=url;
+  $('live-msg').textContent=s==='none'?'This is a server application, so it runs as its own service. Start a live preview to run the current build and use it right here.':s==='error'?(st.message||'The preview failed to start.'):s==='starting'?'First start can take a minute while the container builds.':'';
+  $('live-logs').hidden=!liveLogs||s==='none';
+}
+$('live-start').onclick=action(async()=>{liveBusy=true;try{if(app.preview?.status==='running')await api('apps/'+app.id+'/preview-stop',{});await api('apps/'+app.id+'/preview-start',{});}finally{liveBusy=false;}toast('Starting live preview…');await refresh();});
+$('live-stop').onclick=action(async()=>{await api('apps/'+app.id+'/preview-stop',{});liveStatus=null;await refresh();});
+$('live-logs-btn').onclick=action(async()=>{liveLogs=!liveLogs;if(liveLogs){const r=await api('apps/'+app.id+'/preview-logs');$('live-logs').textContent=typeof r==='string'?r:(r.logs||r.lines||[]).join?.('\n')||JSON.stringify(r,null,2);}drawLive();});
 // Status pill: "Generating · m:ss · attempt n/N" ticks every second from startedAt, with a Stop button beside it.
 function pillText(){
   const g=app.generation;
@@ -220,8 +243,10 @@ function draw(){
   if(planOpen&&!planVisible()){planOpen=false;planEditing=false;}
   const ready=published?Boolean(app.release):app.build?.status==='ready';const url=BASE+'/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
   const key=[app.id,published,app.build?.id,app.build?.status,app.release?.number,app.documents.length,app.comments.length,app.binding].join(':');
-  $('preview').hidden=!ready;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
-  $('open-preview').href=url;$('open-preview').hidden=!ready;
+  const live=ready&&app.config.tier==='app'; // a server app has no inline HTML: show the live-preview panel instead of the iframe
+  $('preview').hidden=!ready||live;$('live-panel').hidden=!live;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&!live&&key!==previewKey){$('preview').src=url;previewKey=key;}
+  $('open-preview').href=url;$('open-preview').hidden=!ready||live;
+  if(live){drawLive();if(app.preview)pollLive();}
   $('canvas-view').hidden=historyOpen||planOpen;$('history-view').hidden=!historyOpen||planOpen;$('plan-view').hidden=!planOpen;
   const base=!historyOpen&&!planOpen;
   $('draft').classList.toggle('selected',!published&&base);$('published').classList.toggle('selected',published&&base);$('history').classList.toggle('selected',historyOpen&&!planOpen);$('plan-tab').classList.toggle('selected',planOpen);
