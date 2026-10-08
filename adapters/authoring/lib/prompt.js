@@ -10,6 +10,8 @@
  * gate enforces (passed through verbatim as payload.constraints by store.js) specifically so
  * the prompt and the gate can never disagree — see docs/implementation-status.md.
  */
+import { designSystemBlock } from './templates.js';
+
 const KIND_GUIDANCE = {
   interactive: 'An interactive web page or small game, rendered entirely client-side. No build step, no server, no network calls — everything must run standalone in a sandboxed iframe.',
   knowledge: 'A knowledge workspace / "digital expert" layout that presents recorded agent-run briefings. Must include the literal marker <!--PAC-BRIEFINGS--> in index.html at the point where briefings should render — the host substitutes real content there.',
@@ -109,7 +111,7 @@ function capabilitiesBlock(capabilities) {
 }
 
 export function buildMessages(payload) {
-  const { kind, title, brief, accent, attempt, maxAttempts, constraints, previousAttempt, currentSource, changeRequest, capabilities } = payload;
+  const { kind, title, brief, accent, accentHex, style, attempt, maxAttempts, constraints, previousAttempt, currentSource, changeRequest, capabilities } = payload;
   const isRevise = Boolean(currentSource);
   const system = [
     'You are the authoring engine inside PAC Manager, a self-service internal app platform.',
@@ -132,10 +134,11 @@ export function buildMessages(payload) {
     `Artifact kind: ${kind} — ${KIND_GUIDANCE[kind] || KIND_GUIDANCE.auto}`,
     `Title: ${title}`,
     `Brief: ${brief}`,
-    accent ? `Visual accent (a CSS color token name, purely cosmetic — do not fetch a real palette for it, just pick sensible colors): ${accent}` : '',
+    accent ? `Brand accent: "${accent}"${accentHex ? ` (${accentHex})` : ''} — already wired into the design system as var(--pac-accent); never hard-code it.` : '',
     '',
     constraintsBlock(kind, constraints),
     capabilitiesBlock(capabilities),
+    '\n' + designSystemBlock({ kind, style }),
     attempt > 1 ? `\nThis is attempt ${attempt} of ${maxAttempts}.` : '',
     currentSourceBlock(currentSource, changeRequest),
     previousAttemptBlock(previousAttempt),

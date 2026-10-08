@@ -9,7 +9,7 @@ import { join, relative, sep } from 'node:path';
  * oversight: a real .gitignore can express patterns (negation, nested globs) this
  * fixed list can't, so a repo relying on unusual ignore rules may digest more than
  * expected. Callers that need exact parity with `git ls-files` should pass `extraIgnore`. */
-const DEFAULT_IGNORE = new Set(['.git', 'node_modules', '__pycache__', 'dist', 'build', '.next', '.venv', 'venv', '.deploykit-state', 'coverage']);
+export const DEFAULT_IGNORE =new Set(['.git', 'node_modules', '__pycache__', 'dist', 'build', '.next', '.venv', 'venv', '.deploykit-state', 'coverage']);
 
 function listFiles(root, dir, ignore) {
   let out = [];

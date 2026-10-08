@@ -1,9 +1,11 @@
 import { completeChat } from './litellm.js';
+import { normalizeStyle, STYLE_PRESETS, STYLE_THEMES, STYLE_DENSITIES, STYLE_LAYOUTS } from './style-options.js';
 import { CAPABILITIES, SENSITIVE_DATA_NOTICE, expandCapabilities, deriveKind, deriveEnvRefs } from './capabilities.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
 /** The system prompt is built from the same capability list the picker and definition.js use, so the model can only propose what the backend will accept. */
+const ids = l => l.map(x => `"${x.id}"`).join('|');
 function systemPrompt() {
   const line = c => `- ${c.id} (${c.label}): ${c.description}`;
   const usable = CAPABILITIES.filter(c => c.group !== 'future'), future = CAPABILITIES.filter(c => c.group === 'future');
@@ -20,7 +22,8 @@ function systemPrompt() {
     '',
     'Rules: prefer the MINIMAL set of capabilities. Prefer static / no-server (the "works today" group) unless the app truly needs a shared database or AI at runtime. Ask at most 3 clarifying questions, and only if essential; otherwise return an empty questions array.',
     'Reply with ONLY a single JSON object, no prose, no code fence, with exactly these keys:',
-    '{"title": string (3-80 chars), "summary": string (<=500 chars, what the app is), "capabilities": [{"id": string, "why": string}], "unavailable": [{"id": string, "why": string}], "kindRationale": string (why this kind of app: interactive page, knowledge briefing page, or server application), "plan": string (markdown: what will be built, screens, data, which capabilities and why, open questions), "questions": [string]}',
+    `{"title": string (3-80 chars), "summary": string (<=500 chars, what the app is), "capabilities": [{"id": string, "why": string}], "unavailable": [{"id": string, "why": string}], "kindRationale": string (why this kind of app: interactive page, knowledge briefing page, or server application), "plan": string (markdown: what will be built, screens, data, which capabilities and why, open questions), "questions": [string], "style": {"preset": one of ${ids(STYLE_PRESETS)}, "layout": one of ${ids(STYLE_LAYOUTS)}, "theme": one of ${ids(STYLE_THEMES)}, "density": one of ${ids(STYLE_DENSITIES)}}}`,
+    'Style: suggest the look that fits the brief, e.g. a data/monitoring app suits preset dashboard with layout sidebar; a reading-heavy app suits editorial; a lightweight tool suits clean with layout single or top-nav. Default theme light and density comfortable unless the brief implies otherwise.',
   ].join('\n');
 }
 
@@ -58,7 +61,7 @@ export function normaliseDraft(raw) {
     title, summary: str(raw.summary, 500), capabilities, unavailable,
     kind: deriveKind(expanded), kindRationale: str(raw.kindRationale, 1000), plan: str(raw.plan, 20000),
     questions: (Array.isArray(raw.questions) ? raw.questions : []).filter(q => typeof q === 'string' && q.trim()).map(q => q.trim().slice(0, 500)).slice(0, 3),
-    envRefs: deriveEnvRefs(expanded),
+    envRefs: deriveEnvRefs(expanded), style: normalizeStyle(raw.style),
   };
 }
 

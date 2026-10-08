@@ -80,3 +80,26 @@ test('PROMPT-010 no capabilities means no capabilities block at all', () => {
   const [, user] = buildMessages({ kind: 'interactive', title: 'T', brief: 'B', accent: 'teal', attempt: 1, maxAttempts: 3, constraints: {} });
   assert.ok(!user.content.includes('real capabilities'));
 });
+
+test('PROMPT-design static kinds get the design-system block and must not reproduce the kit', () => {
+  const [, user] = buildMessages({ kind: 'interactive', title: 'T', brief: 'B', accent: 'teal', accentHex: '#136f63', style: { preset: 'dashboard', theme: 'dark', density: 'compact', layout: 'sidebar' }, attempt: 1, maxAttempts: 3, constraints });
+  assert.match(user.content, /DESIGN SYSTEM \(PAC UI kit\)/);
+  assert.match(user.content, /\.pac-card/);
+  assert.match(user.content, /dashboard: dense/);
+  assert.match(user.content, /theme dark/);
+  assert.match(user.content, /compact density/);
+  assert.match(user.content, /<nav class="pac-nav"/); // sidebar skeleton
+  assert.match(user.content, /do NOT reproduce or copy the kit/);
+  assert.match(user.content, /360px/);
+  assert.doesNotMatch(user.content, /APP_BASE_PATH/);
+});
+
+test('PROMPT-design application kind: serve pac-ui.css, APP_BASE_PATH, PORT, /health, Dockerfile', () => {
+  const [, user] = buildMessages({ kind: 'application', title: 'T', brief: 'B', accent: 'teal', style: { layout: 'single' }, attempt: 1, maxAttempts: 3, constraints });
+  assert.match(user.content, /pac-ui\.css/);
+  assert.match(user.content, /\{APP_BASE_PATH\}\/pac-ui\.css/);
+  assert.match(user.content, /PORT/);
+  assert.match(user.content, /\/health/);
+  assert.match(user.content, /Dockerfile/);
+  assert.match(user.content, /NEVER overwrite/);
+});

@@ -3,9 +3,11 @@ const LOGOUT_URL=document.querySelector('meta[name="pac-logout"]')?.content||'';
 import { initGraduation } from './graduation-ui.js';
 import { CAPABILITIES,CAPABILITY_GROUPS,USE_CASES,SENSITIVE_DATA_NOTICE,deriveKind,expandCapabilities } from './capabilities.js';
 import { sigilSvg,paintArt,hueFor } from './art.js';
+import { STYLE_PRESETS,STYLE_THEMES,STYLE_DENSITIES,STYLE_LAYOUTS,DEFAULT_STYLE,normalizeStyle } from './style-options.js';
+import { initCode } from './code-ui.js';
 const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
-let me,app,apps=[],selected=qs.get('app'),published=qs.get('published')==='1',previewKey='',historyOpen=false,planOpen=false,planEditing=false,wantPlan=false,selectedRelease=null,currentCards=[],chatMode='chat',inflight=null;
+let me,app,apps=[],selected=qs.get('app'),published=qs.get('published')==='1',previewKey='',historyOpen=false,planOpen=false,codeOpen=false,planEditing=false,wantPlan=false,selectedRelease=null,currentCards=[],chatMode='chat',inflight=null;
 const local=[],dismissedGen={}; // local = in-flight / failed chat entries, merged into the thread by nonce
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Markdown for LLM-written text: marked -> DOMPurify (vendored classic scripts, globals `marked` / `DOMPurify`).
@@ -73,7 +75,7 @@ function showView(v){
 
 // The toast is a manual popover so it renders in the top layer, above any open modal <dialog> (composer, share, ...).
 function toast(text){const t=$('toast');t.textContent=text;t.hidden=false;try{if(!t.matches(':popover-open'))t.showPopover();}catch{/* no popover support: plain fixed element */}clearTimeout(toast.timer);toast.timer=setTimeout(()=>{t.hidden=true;try{t.hidePopover();}catch{/* not open */}},6000);}
-async function api(path,body){const r=await fetch(BASE+'/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(data.error||'Request failed');e.status=r.status;throw e;}return data;}
+async function api(path,body){const r=await fetch(BASE+'/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(data.error||'Request failed');e.status=r.status;e.data=data;throw e;}return data;}
 async function apiDelete(path){const r=await fetch(BASE+'/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
 // Generation is a long call: fire it and let the 2s poll / refresh show progress. A user-initiated cancel makes
@@ -98,17 +100,39 @@ const RUN={
   // Building a plan is the ONLY thing that changes the app -- drafting/editing a plan never does.
   executePlan:async()=>{fireGenerate(app.id,hasSource()?{changeRequest:app.plan.text}:{plan:app.plan.text});return 'Building the plan…';},
   regenerate:async()=>{
+    if(!leaveCode())return null;
     if(!confirm('Regenerate "'+app.config.title+'" from scratch? This discards the current source and starts over — it cannot be undone (though any already-published release can still be rolled back to).'))return null;
     await api('apps/'+app.id+'/definition',{config:{title:app.config.title,brief:app.config.brief,accent:app.config.accent,kind:app.config.kind,tier:'intent'},revision:app.revision});
     fireGenerate(app.id,{});
     return 'Regenerating from scratch…';
   },
   delete:async()=>{
+    if(!leaveCode())return null;
     if(!confirm('Archive "'+app.config.title+'"? This hides it from your list — it isn’t permanently deleted, and an admin can restore or purge it later.'))return null;
     await apiDelete('apps/'+app.id);selected=null;
     return 'Archived.';
   },
 };
+// Rebuild (used by Code's "Save & rebuild" and the Plan tab): start a build; for a server (app-tier) app also restart the live
+// preview once the build is ready, since startPreview needs a ready build.
+let rebuilding=false;
+async function rebuildApp(){
+  const a=app;if(!a||rebuilding)return;rebuilding=true;
+  try{
+    await api('apps/'+a.id+'/build',{});
+    if(a.config.tier==='app'){
+      let cur=null;
+      for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,1500));cur=await api('apps/'+a.id);if(cur.build?.status!=='building')break;}
+      if(cur?.build?.status!=='ready')throw new Error('The build did not finish successfully — see the Log tab.');
+      if(cur.preview?.status==='running')await api('apps/'+a.id+'/preview-stop',{});
+      await api('apps/'+a.id+'/preview-start',{});toast('Build ready — restarting the live preview…');
+    }else toast('Rebuilding…');
+    await refresh();
+  }finally{rebuilding=false;}
+}
+const code=initCode({api,$,getApp:()=>app,getMe:()=>me,toast,esc,BASE,rebuild:rebuildApp});
+// Leaving the Code tab / switching app with unsaved edits asks first.
+const leaveCode=()=>{if(!codeOpen||!code.dirty())return true;if(!confirm('You have unsaved edits to '+code.currentPath()+'. Discard them?'))return false;code.discard();return true;};
 // The single source of "what can I do, and why" -- a pure function of the app's real state.
 function proposals(){
   const hasKind=Boolean(app.config.kind),g=app.generation;
@@ -238,7 +262,7 @@ function draw(){
     autoBuiltRevision[app.id]=app.revision;
     api('apps/'+app.id+'/build',{}).then(refresh).catch(error=>toast(error.message));
   }
-  if(wantPlan&&planVisible()){planOpen=true;historyOpen=false;wantPlan=false;}
+  if(wantPlan&&planVisible()){planOpen=true;historyOpen=false;codeOpen=false;wantPlan=false;}
   else if(wantPlan&&['ready','failed','cancelled'].includes(app.generation?.status))wantPlan=false;
   if(planOpen&&!planVisible()){planOpen=false;planEditing=false;}
   const ready=published?Boolean(app.release):app.build?.status==='ready';const url=BASE+'/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
@@ -247,19 +271,21 @@ function draw(){
   $('preview').hidden=!ready||live;$('live-panel').hidden=!live;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&!live&&key!==previewKey){$('preview').src=url;previewKey=key;}
   $('open-preview').href=url;$('open-preview').hidden=!ready||live;
   if(live){drawLive();if(app.preview)pollLive();}
-  $('canvas-view').hidden=historyOpen||planOpen;$('history-view').hidden=!historyOpen||planOpen;$('plan-view').hidden=!planOpen;
-  const base=!historyOpen&&!planOpen;
-  $('draft').classList.toggle('selected',!published&&base);$('published').classList.toggle('selected',published&&base);$('history').classList.toggle('selected',historyOpen&&!planOpen);$('plan-tab').classList.toggle('selected',planOpen);
+  if(planOpen||historyOpen)codeOpen=false;
+  $('canvas-view').hidden=historyOpen||planOpen||codeOpen;$('history-view').hidden=!historyOpen||planOpen||codeOpen;$('plan-view').hidden=!planOpen||codeOpen;$('code-view').hidden=!codeOpen;
+  const base=!historyOpen&&!planOpen&&!codeOpen;
+  $('draft').classList.toggle('selected',!published&&base);$('published').classList.toggle('selected',published&&base);$('history').classList.toggle('selected',historyOpen&&!planOpen&&!codeOpen);$('plan-tab').classList.toggle('selected',planOpen);$('code-tab').classList.toggle('selected',codeOpen);
   $('plan-tab').hidden=!planVisible();$('plan-dot').hidden=!(planVisible()&&app.plan.status==='draft');
   if(historyOpen&&!planOpen)renderHistory();
   if(planOpen)renderPlan();
+  if(codeOpen)code.draw(app,{published});
   for(let i=local.length-1;i>=0;i--)if(local[i].status==='done'&&(app.chatLog||[]).some(c=>c.nonce===local[i].nonce))local.splice(i,1);
   setChatMode(chatMode);renderCards();renderThread();
 }
 // The plan lives on the app (app.plan), so it survives a reload; this is the full-width reading/editing surface.
 const PLAN_LABEL={draft:'Draft',executing:'Building…',executed:'Built'};
 // Plan editor: same capability chips as the new-application composer. `planCaps` holds the explicit choices while editing.
-let planCaps=null,planMenu=false;
+let planCaps=null,planMenu=false,planStyle=null,planAccent=null;
 const explicitOf=ids=>{const implied=new Set(CAPABILITIES.flatMap(c=>ids.includes(c.id)?(c.implies||[]):[]));return ids.filter(id=>!implied.has(id));};
 function renderPlanCaps(){
   const editing=planEditing&&planCaps,explicit=editing?planCaps:explicitOf(app.config.capabilities||[]);
@@ -274,13 +300,39 @@ $('plan-caps').addEventListener('click',e=>{
   else planMenu=!planMenu;
   renderPlanCaps();
 });
+const pendKey=id=>'pac-style-pending:'+id;
+const sameStyle=(a,b)=>JSON.stringify(normalizeStyle(a))===JSON.stringify(normalizeStyle(b));
+// A style/accent change needs a rebuild, not a regeneration. Authoritative when the build records its style; otherwise a
+// per-session marker set when the plan was saved with a different look.
+function stylePending(){
+  if(!hasSource())return false;
+  const r=app.build?.result;
+  if(r&&r.style)return !sameStyle(r.style,app.config.style)||(r.accent!==undefined&&r.accent!==app.config.accent);
+  const rev=Number(sessionStorage.getItem(pendKey(app.id))||0);
+  return rev>0&&!(app.build?.status==='ready'&&app.build.revision>=rev);
+}
+function renderPlanLook(){
+  const editing=planEditing&&planStyle,tier=app.config.tier;
+  const verb=tier==='app'?'Rebuild to apply — no regeneration needed.':tier==='static'?'Rebuild to apply.':'The look is applied when the application is generated.';
+  const changed=editing&&(!sameStyle(planStyle,app.config.style)||planAccent!==app.config.accent);
+  const note=editing?(changed?`<p class="hint warn">${esc(verb)}</p>`:''):stylePending()?`<p class="hint warn look-note">${esc(verb)} <button type="button" id="plan-rebuild" class="primary"${rebuilding?' disabled':''}><svg class="icon"><use href="#icon-play"/></svg>Rebuild</button></p>`:'';
+  const html=lookBlock(lookFor({style:editing?planStyle:app.config.style,accent:editing?planAccent:app.config.accent,editable:Boolean(editing)}))+note;
+  if(setHtml($('plan-look'),html))paintSwatches($('plan-look'));
+}
+$('plan-look').addEventListener('click',action(async e=>{
+  const t=e.target.closest('[data-look],[data-accent],#plan-rebuild');if(!t)return;
+  if(t.id==='plan-rebuild'){t.disabled=true;try{await rebuildApp();}finally{if(app)renderPlanLook();}return;}
+  if(!planEditing||!planStyle)return;
+  if(t.dataset.look)planStyle={...planStyle,[t.dataset.look]:t.dataset.v};else planAccent=t.dataset.accent;
+  renderPlanLook();
+}));
 function renderPlan(){
   const p=app.plan,busy=p.status==='executing'||app.generation?.status==='generating';
   $('plan-status').textContent=PLAN_LABEL[p.status]||p.status;$('plan-status').className='plan-chip plan-'+p.status;
   $('plan-meta').textContent=[p.by,p.at&&when(p.at)].filter(Boolean).join(' · ');
   $('plan-build').disabled=busy||planEditing;$('plan-build').lastChild.textContent=p.status==='executed'?'Build again':'Build this plan';
   $('plan-edit').hidden=busy||planEditing;$('plan-discard').hidden=true; // a plan can be edited, not removed
-  $('plan-body').hidden=planEditing;$('plan-editor').hidden=!planEditing;renderPlanCaps();
+  $('plan-body').hidden=planEditing;$('plan-editor').hidden=!planEditing;renderPlanCaps();renderPlanLook();
   if(!planEditing)setHtml($('plan-body'),md(p.text));
 }
 function renderHistory(){
@@ -308,9 +360,9 @@ $('logout').onclick=action(async()=>{
 $('new').onclick=$('start').onclick=()=>openComposer();
 $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-const resetView=()=>{planOpen=false;planEditing=false;wantPlan=false;historyOpen=false;};
-$('crumb-home').onclick=action(async()=>{selected=null;resetView();history.replaceState(null,'',BASE+'/');await refresh();});
-const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;resetView();$('switcher-popover').hidden=true;history.replaceState(null,'',BASE+'/?app='+selected);await refresh();});
+const resetView=()=>{codeOpen=false;planOpen=false;planEditing=false;wantPlan=false;historyOpen=false;};
+$('crumb-home').onclick=action(async()=>{if(!leaveCode())return;selected=null;resetView();history.replaceState(null,'',BASE+'/');await refresh();});
+const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;if(b.dataset.app!==selected&&!leaveCode())return;selected=b.dataset.app;published=false;resetView();$('switcher-popover').hidden=true;history.replaceState(null,'',BASE+'/?app='+selected);await refresh();});
 $('home').onclick=openApp;$('switcher-list').onclick=openApp;
 $('crumb-toggle').onclick=e=>{e.stopPropagation();renderSwitcher();$('switcher-popover').hidden=!$('switcher-popover').hidden;};
 $('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;openComposer();};
@@ -346,7 +398,7 @@ let chatExpanded=false;
   // Collapse to a rail (wide) -- persisted like pac-chat-w.
   const setCollapsed=c=>{grid.dataset.chat=c?'collapsed':'open';localStorage.setItem('pac-chat-collapsed',c?'1':'0');};
   setCollapsed(localStorage.getItem('pac-chat-collapsed')==='1');
-  $('chat-collapse').addEventListener('click',()=>setCollapsed(true));$('chat-rail').addEventListener('click',()=>setCollapsed(false));
+  $('chat-collapse').addEventListener('click',()=>{if(matchMedia('(max-width:1150px)').matches)setSheet(false);else setCollapsed(true);});$('chat-rail').addEventListener('click',()=>setCollapsed(false));
   // Bottom sheet (narrow): click the handle to peek/open, drag it to resize.
   const setSheet=o=>{grid.dataset.sheet=o?'open':'closed';sheetBtn.setAttribute('aria-expanded',String(o));localStorage.setItem('pac-chat-sheet',o?'open':'closed');};
   setSheet(localStorage.getItem('pac-chat-sheet')==='open');
@@ -373,8 +425,9 @@ async function openShare(){
 $('share-btn').onclick=action(openShare);
 $('share-list').onclick=action(async e=>{const b=e.target.closest('[data-unshare]');if(!b)return;await api('apps/'+app.id+'/unshare',{email:b.dataset.unshare});await refresh();await openShare();});
 $('share-form').onsubmit=action(async()=>{await api('apps/'+app.id+'/share',{email:$('share-email').value});$('share-email').value='';await refresh();await openShare();});
-$('draft').onclick=()=>{published=false;resetView();draw();};$('published').onclick=()=>{published=true;resetView();draw();};$('history').onclick=()=>{resetView();historyOpen=true;draw();};
-$('plan-tab').onclick=()=>{historyOpen=false;planOpen=true;draw();};
+$('draft').onclick=()=>{if(!leaveCode())return;published=false;resetView();draw();};$('published').onclick=()=>{if(!leaveCode())return;published=true;resetView();draw();};$('history').onclick=()=>{if(!leaveCode())return;resetView();historyOpen=true;draw();};
+$('plan-tab').onclick=()=>{if(!leaveCode())return;historyOpen=false;codeOpen=false;planOpen=true;draw();};
+$('code-tab').onclick=()=>{if(codeOpen)return;historyOpen=false;planOpen=false;planEditing=false;codeOpen=true;draw();};
 $('chat-cards').onclick=action(async e=>{
   const b=e.target.closest('[data-card]');if(!b)return;
   const card=currentCards[Number(b.dataset.card)],act=card.actions[Number(b.dataset.action)];
@@ -385,9 +438,9 @@ $('chat-cards').onclick=action(async e=>{
 });
 // ---- plan tab actions
 $('plan-build').onclick=action(async()=>{$('plan-build').disabled=true;const message=await RUN.executePlan();await refresh();toast(message);});
-$('plan-edit').onclick=()=>{planEditing=true;planCaps=explicitOf(app.config.capabilities||[]);planMenu=false;$('plan-text').value=app.plan.text;renderPlan();$('plan-text').focus();};
-$('plan-cancel').onclick=()=>{planEditing=false;planCaps=null;planMenu=false;renderPlan();};
-$('plan-save').onclick=action(async()=>{const text=$('plan-text').value.trim();if(!text)throw new Error('A plan cannot be empty — discard it instead.');await api('apps/'+app.id+'/plan',{text,capabilities:expandCapabilities(planCaps||[])});planEditing=false;planCaps=null;planMenu=false;await refresh();toast('Plan saved.');});
+$('plan-edit').onclick=()=>{planEditing=true;planStyle=normalizeStyle(app.config.style);planAccent=app.config.accent;planCaps=explicitOf(app.config.capabilities||[]);planMenu=false;$('plan-text').value=app.plan.text;renderPlan();$('plan-text').focus();};
+$('plan-cancel').onclick=()=>{planEditing=false;planCaps=null;planStyle=null;planAccent=null;planMenu=false;renderPlan();};
+$('plan-save').onclick=action(async()=>{const text=$('plan-text').value.trim();if(!text)throw new Error('A plan cannot be empty — discard it instead.');const lookChanged=planStyle&&(!sameStyle(planStyle,app.config.style)||planAccent!==app.config.accent);await api('apps/'+app.id+'/plan',{text,capabilities:expandCapabilities(planCaps||[]),style:normalizeStyle(planStyle),accent:planAccent});planEditing=false;planCaps=null;planStyle=null;planAccent=null;planMenu=false;await refresh();if(lookChanged&&hasSource())sessionStorage.setItem(pendKey(app.id),String(app.revision));renderPlanLook();toast(lookChanged&&hasSource()?'Plan saved. Rebuild to apply the new look.':'Plan saved.');});
 $('plan-discard').onclick=action(async()=>{if(!confirm('Discard this plan? Nothing has been built from it.'))return;await api('apps/'+app.id+'/plan',{status:'discarded'});planOpen=false;planEditing=false;await refresh();toast('Plan discarded.');});
 $('release-history-full').onclick=e=>{
   const b=e.target.closest('[data-release]');if(!b)return;
@@ -461,7 +514,7 @@ $('chat-thread').onclick=e=>{
   const r=e.target.closest('[data-retry]'),d=e.target.closest('[data-drop]');
   if(r){const entry=local.find(l=>l.nonce===r.dataset.retry);if(!entry||inflight)return;dropLocal(entry);sendChat(entry.mode,entry.message);}
   else if(d){const entry=local.find(l=>l.nonce===d.dataset.drop);if(entry){dropLocal(entry);renderThread();}}
-  else if(e.target.closest('[data-openplan]')){if(planVisible()){historyOpen=false;planOpen=true;draw();}else toast('No open plan for this app.');}
+  else if(e.target.closest('[data-openplan]')){if(planVisible()){if(!leaveCode())return;historyOpen=false;codeOpen=false;planOpen=true;draw();}else toast('No open plan for this app.');}
 };
 $('chat-form').onsubmit=action(async()=>{
   if(chatMode==='log'||inflight)return; // log is read-only; one reply at a time
@@ -477,14 +530,36 @@ $('invite-form').onsubmit=action(async()=>{const result=await api('apps/'+app.id
 // Draft state + conversation history live in sessionStorage so a refresh doesn't lose them.
 const CMP_KEY='pac-composer';
 let cs=null,cmpToken=0,cmpBusy=false,cmpMenu=false;
-const freshCs=()=>({step:1,prompt:'',history:[],draft:null,caps:[],title:'',summary:'',accent:$('accent').options[0]?.value||'',manual:false,error:null,errStatus:0,lastUser:''});
+const freshCs=()=>({step:1,prompt:'',history:[],draft:null,caps:[],title:'',summary:'',accent:$('accent').options[0]?.value||'',style:{...DEFAULT_STYLE},suggested:null,styleTouched:false,manual:false,error:null,errStatus:0,lastUser:''});
 const saveCs=()=>{try{sessionStorage.setItem(CMP_KEY,JSON.stringify({...cs,open:$('composer').open}));}catch{/* storage full/blocked: draft just won't survive a refresh */}};
 const effectiveCaps=()=>new Set(expandCapabilities(cs.caps));
 const capById=id=>CAPABILITIES.find(c=>c.id===id);
 const accentLabel=v=>[...$('accent').options].find(o=>o.value===v)?.textContent||v;
 function openComposer(){cs=freshCs();showComposer();}
 function showComposer(){if(!$('composer').open)$('composer').showModal();renderComposer();}
-function swatchesHtml(){return `<div class="swatches" role="group" aria-label="Accent colour">${[...$('accent').options].map(o=>`<button type="button" class="swatch${o.value===cs.accent?' selected':''}" data-accent="${esc(o.value)}" data-sw="${esc(o.value)}" title="${esc(o.textContent)}" aria-label="Accent: ${esc(o.textContent)}" aria-pressed="${o.value===cs.accent}"></button>`).join('')}<small>${esc(accentLabel(cs.accent))}</small></div>`;}
+function swatchesHtml(accent=cs?.accent){return `<div class="swatches" role="group" aria-label="Accent colour">${[...$('accent').options].map(o=>`<button type="button" class="swatch${o.value===accent?' selected':''}" data-accent="${esc(o.value)}" data-sw="${esc(o.value)}" title="${esc(o.textContent)}" aria-label="Accent: ${esc(o.textContent)}" aria-pressed="${o.value===accent}"></button>`).join('')}<small>${esc(accentLabel(accent))}</small></div>`;}
+// ---- Look & feel (shared by the composer and the Plan tab). Each preset card is a tiny mockup rendered by the real UI kit,
+// scoped under its own class; one <link> per distinct (preset,theme,density,layout,accent), appended once.
+const kitScopes=new Map();
+function kitScope(s,accent){
+  const key=[s.preset,s.theme,s.density,s.layout,accent||''].join('|');let cls=kitScopes.get(key);
+  if(!cls){cls='kit-'+kitScopes.size;kitScopes.set(key,cls);const l=document.createElement('link');l.rel='stylesheet';
+    l.href=BASE+'/ui-kit.css?'+new URLSearchParams({...s,...(accent?{accent}:{}),scope:'.'+cls});document.head.appendChild(l);}
+  return cls;
+}
+const LOOK_MOCK='<div class="pac-app"><div class="pac-nav"><b>Acme</b><span>Home</span><span>Reports</span></div><div class="p-3"><div class="font-semibold text-sm">Overview</div><div class="grid grid-cols-2 gap-2"><div class="pac-card p-2"><div class="pac-stat"><b>128</b></div><span class="pac-badge">New</span></div><div class="pac-card p-2"><div class="text-sm">Task</div><span class="pac-btn pac-btn-primary">Go</span></div></div></div></div>';
+const labelOf=(list,id)=>list.find(x=>x.id===id)?.label||id;
+const lookSummary=(s,accent)=>{const n=normalizeStyle(s);return [labelOf(STYLE_PRESETS,n.preset),labelOf(STYLE_THEMES,n.theme),labelOf(STYLE_DENSITIES,n.density),labelOf(STYLE_LAYOUTS,n.layout)];};
+function segHtml(key,label,list,cur){return `<div class="look-seg"><span class="look-seg-label">${esc(label)}</span><div class="segmented seg-sm" role="group" aria-label="${esc(label)}">${list.map(o=>`<button type="button" data-look="${key}" data-v="${esc(o.id)}" class="${o.id===cur?'selected':''}" aria-pressed="${o.id===cur}"${o.description?` title="${esc(o.description)}"`:''}>${esc(o.label)}</button>`).join('')}</div></div>`;}
+// editable=false: a chips-style read-only summary. editable=true: preset cards + Theme/Density/Layout toggles + accent swatches.
+function lookFor({style,accent,editable,suggested}){
+  const s=normalizeStyle(style);
+  if(!editable)return `<div class="chips look-chips">${lookSummary(s).map((t,i)=>`<span class="chip"><span class="chip-main"><b>${esc(t)}</b><small>${['Style','Theme','Density','Layout'][i]}</small></span></span>`).join('')}<span class="chip"><span class="chip-main"><b><i class="swatch-dot" data-sw="${esc(accent)}"></i>${esc(accentLabel(accent))}</b><small>Accent</small></span></span></div>`;
+  return `<div class="look-presets" role="radiogroup" aria-label="Style preset">${STYLE_PRESETS.map(p=>`<button type="button" class="look-card${p.id===s.preset?' selected':''}" data-look="preset" data-v="${esc(p.id)}" role="radio" aria-checked="${p.id===s.preset}"><span class="look-mock"><span class="look-mock-in ${kitScope({...s,preset:p.id},accent)}">${LOOK_MOCK}</span></span><span class="look-card-body"><strong>${esc(p.label)}${p.id===suggested?'<em class="cap-tag">Suggested</em>':''}</strong><small>${esc(p.description)}</small></span></button>`).join('')}</div>
+<div class="look-segs">${segHtml('theme','Theme',STYLE_THEMES,s.theme)}${segHtml('density','Density',STYLE_DENSITIES,s.density)}${segHtml('layout','Layout',STYLE_LAYOUTS,s.layout)}</div>
+<div class="look-accent-row"><span class="look-seg-label">Accent</span>${swatchesHtml(accent)}</div>`;
+}
+const lookBlock=(inner)=>'<h4>Look &amp; feel</h4>'+inner;
 // Brand accent hexes aren't exposed to the page, only keys/labels -- use the key as a CSS colour when it is one ("teal"),
 // otherwise a stable generated hue, so swatches stay distinguishable and brand-neutral.
 function paintSwatches(root){root.querySelectorAll('[data-sw]').forEach(s=>{const v=s.dataset.sw,hex=$('accent').querySelector(`option[value="${CSS.escape(v)}"]`)?.dataset.color;s.style.setProperty('--sw',hex||`hsl(${hueFor(v)} 70% 45%)`);});}
@@ -521,7 +596,7 @@ function step2Html(){
   if(cs.manual)return `<div class="cmp-narrow"><h2>Pick it yourself</h2><p class="hint">No AI involved — name it, describe it and tick what it should be able to do.</p>
 <label>Application name<input id="cmp-title" maxlength="80" placeholder="Claims team workspace" value="${esc(cs.title)}"></label>
 <label>Describe what your team needs<textarea id="cmp-summary" maxlength="3000" placeholder="Help adjusters review synthetic claims, share guidance and discuss follow-ups.">${esc(cs.summary||cs.prompt)}</textarea></label>
-<div class="cmp-block"><h4>Accent</h4>${swatchesHtml()}</div>
+<div class="cmp-block" id="cmp-look">${lookBlock(lookFor({style:cs.style,accent:cs.accent,editable:true,suggested:cs.suggested}))}</div>
 <div id="capability-picker"><p class="eyebrow">WHAT SHOULD IT BE ABLE TO DO?</p><div id="capability-groups"></div></div><p class="hint kind-line" id="kind-derived"></p>
 <p class="cmp-skip"><button type="button" class="link-btn" data-act="back">← Use the AI sketch instead</button></p></div>`;
   if(cmpBusy)return `<div class="cmp-narrow sketching" role="status" aria-live="polite"><div class="sketch-art aurora" data-seed="sketching">${sigilSvg('sketching your application',{w:420,h:150,key:'sketching'})}</div><p class="eyebrow">Sketching your application…</p><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-line short"></div><div class="sk-chips"><i></i><i></i><i></i><i></i></div><div class="sk sk-block"></div></div>`;
@@ -534,7 +609,7 @@ function step2Html(){
 <label>What it does<textarea id="cmp-summary" rows="3" maxlength="3000">${esc(cs.summary)}</textarea></label>
 <div class="cmp-block"><h4>Capabilities</h4><div class="chips" id="cmp-chips">${chipsHtml(true)}</div><p class="hint kind-line"><b>${esc(kindLine())}</b> ${esc(d.kindRationale||'')}</p></div>
 ${unavailable?`<div class="cmp-block cmp-unavailable"><h4>Not available yet</h4><ul>${unavailable}</ul></div>`:''}
-<div class="cmp-block"><h4>Accent</h4>${swatchesHtml()}</div>
+<div class="cmp-block" id="cmp-look">${lookBlock(lookFor({style:cs.style,accent:cs.accent,editable:true,suggested:cs.suggested}))}</div>
 <p class="cmp-skip"><button type="button" class="link-btn" data-act="manual">Skip the AI — pick capabilities manually</button></p></div>
 <div class="cmp-col"><details class="cmp-plan" open><summary>The plan</summary><div class="md">${md(d.plan||'')}</div></details>
 <div class="cmp-block cmp-refine"><h4>${questions?'A few questions':'Want to change something?'}</h4>${questions?`<ul>${questions}</ul>`:''}<textarea id="cmp-reply" rows="2" maxlength="2000" placeholder="Answer here, or tell me what to change…"></textarea><div class="cmp-prompt-row"><span class="hint"><kbd>${/Mac|iP/.test(navigator.platform)?'⌘':'Ctrl'}</kbd> + <kbd>Enter</kbd></span><button type="button" class="ghost" data-act="refine">Refine</button></div></div></div></div>`;
@@ -543,7 +618,7 @@ function step3Html(){
   const d=cs.draft;
   return `<div class="cmp-narrow cmp-confirm"><p class="eyebrow">Ready to build</p><h2>${esc(cs.title)}</h2><p class="cmp-lede">${esc(cs.summary||cs.prompt)}</p>
 <div class="cmp-block"><h4>It will be able to</h4><div class="chips">${chipsHtml(false)}</div><p class="hint kind-line">${esc(kindLine())}</p></div>
-<div class="cmp-block"><h4>Accent</h4><div class="swatches"><button type="button" class="swatch selected" data-sw="${esc(cs.accent)}" aria-label="${esc(accentLabel(cs.accent))}" disabled></button><small>${esc(accentLabel(cs.accent))}</small></div></div>
+<div class="cmp-block"><h4>Look &amp; feel</h4>${lookFor({style:cs.style,accent:cs.accent,editable:false})}</div>
 ${d?.plan?`<details class="cmp-plan"><summary>The plan</summary><div class="md">${md(d.plan)}</div></details>`:'<p class="hint">No plan was drafted — the application will be generated from your description.</p>'}
 <p class="hint warn">${esc(SENSITIVE_DATA_NOTICE)}</p></div>`;
 }
@@ -561,6 +636,8 @@ function renderComposer(){
   if(cs.step===1)$('cmp-prompt')?.focus();
 }
 // Re-render only the capability chips + kind line (keeps focus in the title/summary inputs).
+// Re-render only the Look & feel block (keeps scroll + focus elsewhere).
+function rerenderLook(){const el=$('cmp-look');if(!el){renderComposer();return;}el.innerHTML=lookBlock(lookFor({style:cs.style,accent:cs.accent,editable:true,suggested:cs.suggested}));paintSwatches(el);saveCs();}
 function rerenderChips(){if($('cmp-chips'))$('cmp-chips').innerHTML=chipsHtml(true);else renderComposer();saveCs();}
 const draftDigest=d=>`${d.title}: ${d.summary}\nCapabilities: ${(d.capabilities||[]).map(c=>c.id).join(', ')||'none'}\nKind: ${d.kind||''}${d.questions?.length?'\nQuestions: '+d.questions.join(' | '):''}`;
 function draftError(e){return e.status===501?'AI drafting isn’t set up on this studio yet — no authoring model is connected. Ask your admin to configure one, or skip the AI and pick capabilities manually.':e.status===502?'The AI drafting service didn’t return a usable draft. This is usually temporary — try again in a moment.':e.message||'Something went wrong while sketching.';}
@@ -572,7 +649,7 @@ async function sketch(reply){
   try{
     const d=await api('drafts',{brief:text,...(history.length?{history}:{})});
     if(token!==cmpToken||!$('composer').open)return;
-    cs.history=history;cs.lastUser=text;cs.draft=d;cs.title=d.title||cs.title;cs.summary=d.summary||'';
+    cs.history=history;cs.lastUser=text;cs.draft=d;if(d.style){cs.suggested=normalizeStyle(d.style).preset;if(!cs.styleTouched)cs.style=normalizeStyle(d.style);}cs.title=d.title||cs.title;cs.summary=d.summary||'';
     cs.caps=(d.capabilities||[]).filter(c=>!c.implied&&capById(c.id)&&capById(c.id).group!=='future').map(c=>c.id);
   }catch(e){if(token!==cmpToken)return;cs.error=draftError(e);cs.errStatus=e.status||0;}
   finally{if(token===cmpToken){cmpBusy=false;if($('composer').open)renderComposer();}}
@@ -586,7 +663,7 @@ function validateDraft(){
 async function buildIt(){
   validateDraft();
   const caps=[...effectiveCaps()],plan=cs.manual?'':cs.draft?.plan;
-  const result=await api('apps',{title:cs.title.trim(),brief:((cs.summary||'').trim()||cs.prompt.trim()).slice(0,3000),accent:cs.accent,kind:deriveKind(caps),tier:'intent',capabilities:caps,...(plan?{plan}:{})});
+  const result=await api('apps',{title:cs.title.trim(),brief:((cs.summary||'').trim()||cs.prompt.trim()).slice(0,3000),accent:cs.accent,kind:deriveKind(caps),tier:'intent',capabilities:caps,style:normalizeStyle(cs.style),...(plan?{plan}:{})});
   sessionStorage.removeItem(CMP_KEY);cs=null;$('composer').close();
   selected=result.id;published=false;resetView();wantPlan=true;history.replaceState(null,'',BASE+'/?app='+selected);
   fireGenerate(selected,{plan:plan||result.plan?.text}); // every app has a starting plan (the AI draft, else its brief)
@@ -601,13 +678,14 @@ const COMPOSER_ACTIONS={
 };
 $('composer').addEventListener('click',async e=>{try{await onComposerClick(e);}catch(error){toast(error.message);}});
 async function onComposerClick(e){
-  const t=e.target.closest('[data-act],[data-rm],[data-add],[data-usecase],[data-accent],#cmp-close,#cmp-stepper li');if(!t||!cs)return;
+  const t=e.target.closest('[data-act],[data-rm],[data-add],[data-usecase],[data-accent],[data-look],#cmp-close,#cmp-stepper li');if(!t||!cs)return;
   if(t.disabled)return;
   if(t.id==='cmp-close'){$('composer').close();return;}
   if(t.dataset.act){await COMPOSER_ACTIONS[t.dataset.act]?.();return;}
   if(t.dataset.rm){cs.caps=cs.caps.filter(c=>c!==t.dataset.rm);rerenderChips();return;}
   if(t.dataset.add){if(!cs.caps.includes(t.dataset.add))cs.caps.push(t.dataset.add);cmpMenu=false;rerenderChips();return;}
-  if(t.dataset.accent){cs.accent=t.dataset.accent;renderComposer();return;}
+  if(t.dataset.look){cs.style={...normalizeStyle(cs.style),[t.dataset.look]:t.dataset.v};cs.styleTouched=true;rerenderLook();return;}
+  if(t.dataset.accent){cs.accent=t.dataset.accent;rerenderLook();return;}
   if(t.dataset.usecase){const u=USE_CASES.find(x=>x.id===t.dataset.usecase);if(!u)return;cs.prompt=ideaPrompt(u);saveCs();const p=$('cmp-prompt');p.value=cs.prompt;p.focus();p.setSelectionRange(p.value.length,p.value.length);p.scrollIntoView({block:'center',behavior:'smooth'});return;}
   if(t.tagName==='LI'){const n=Number(t.dataset.step);if(n<cs.step&&!cmpBusy){cs.step=n;if(n===1)cs.manual=false;renderComposer();}}
 }
