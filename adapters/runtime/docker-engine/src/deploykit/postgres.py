@@ -32,6 +32,8 @@ import logging
 import os
 import secrets
 
+from .naming import pg_ident
+
 _log = logging.getLogger(__name__)
 
 _PG_HOST      = os.environ.get("DEPLOYKIT_PG_HOST", "deploykit-postgres")
@@ -69,8 +71,8 @@ def _provision_sync(app_id: str, enable_pgvector: bool = False) -> str:
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-    db_name  = _slug(app_id)
-    username = f"dk_{db_name}"
+    db_name  = pg_ident(app_id)
+    username = db_name
     password = secrets.token_hex(16)
 
     conn = psycopg2.connect(
@@ -152,8 +154,8 @@ def _deprovision_sync(app_id: str) -> None:
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-    db_name  = _slug(app_id)
-    username = f"dk_{db_name}"
+    db_name  = pg_ident(app_id)
+    username = db_name
 
     conn = psycopg2.connect(
         host=_PG_HOST, port=_PG_PORT,

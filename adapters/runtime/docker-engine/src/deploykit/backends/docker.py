@@ -36,7 +36,8 @@ from .base import DeployBackend
 # was vendored out of) -- deployed-app containers are now named pac-<app_id>, matching the
 # rest of this vendored engine's rename away from deploykit branding (see docker-net -> pac-net
 # etc. in pracman/envs/local/*.sh).
-CONTAINER_PREFIX = "pac"
+from ..naming import RESOURCE_PREFIX, image_tag as _image_tag
+CONTAINER_PREFIX = RESOURCE_PREFIX
 WORKDIR_BASE = Path(os.environ.get("DEPLOYKIT_WORKDIR", "/srv/deploykit/apps"))
 CLONE_TIMEOUT = 120
 BUILD_TIMEOUT = 300
@@ -234,7 +235,7 @@ class DockerBackend(DeployBackend):
                 ):
                     yield ev(line)
 
-            image_tag = f"deploykit/{spec.id}:latest"
+            image_tag = _image_tag(spec.id)
             dockerfile = app_dir / spec.dockerfile
             yield ev(f"Building Docker image {image_tag}...")
             async for line in _stream_run(
@@ -273,7 +274,7 @@ class DockerBackend(DeployBackend):
                 ):
                     yield ev(line)
 
-            image_tag = f"deploykit/{spec.id}:latest"
+            image_tag = _image_tag(spec.id)
             dockerfile = app_dir / spec.dockerfile
             yield ev(f"Building Docker image {image_tag}...")
             async for line in _stream_run(
