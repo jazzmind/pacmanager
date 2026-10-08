@@ -105,3 +105,20 @@ test('APPSPEC-011 a temporal envRef injects the declared var plus a fixed TEMPOR
     if (restore === undefined) delete process.env.PAC_TEMPORAL_ADDRESS; else process.env.PAC_TEMPORAL_ADDRESS = restore;
   }
 });
+
+test('APPSPEC-PFX-1 PAC_APP_PATH_PREFIX mounts apps at /pac-<id> (default /<id>) and tells the app via APP_BASE_PATH', () => {
+  const keep = process.env.PAC_APP_PATH_PREFIX;
+  try {
+    delete process.env.PAC_APP_PATH_PREFIX;
+    let spec = toAppSpec({ id: 'my-app', image: 'x' }, {});
+    assert.equal(spec.path_prefix, '/my-app'); assert.equal(spec.env_vars.APP_BASE_PATH, '/my-app');
+    process.env.PAC_APP_PATH_PREFIX = '/pac-';
+    spec = toAppSpec({ id: 'my-app', image: 'x' }, {});
+    assert.equal(spec.path_prefix, '/pac-my-app'); assert.equal(spec.env_vars.APP_BASE_PATH, '/pac-my-app');
+    // an explicit pathPrefix or APP_BASE_PATH still wins
+    spec = toAppSpec({ id: 'my-app', image: 'x', pathPrefix: '/custom', envVars: { APP_BASE_PATH: '/mine' } }, {});
+    assert.equal(spec.path_prefix, '/custom'); assert.equal(spec.env_vars.APP_BASE_PATH, '/mine');
+    process.env.PAC_APP_PATH_PREFIX = 'nope';
+    assert.throws(() => toAppSpec({ id: 'my-app', image: 'x' }, {}), /PAC_APP_PATH_PREFIX/);
+  } finally { if (keep === undefined) delete process.env.PAC_APP_PATH_PREFIX; else process.env.PAC_APP_PATH_PREFIX = keep; }
+});

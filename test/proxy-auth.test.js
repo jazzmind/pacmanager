@@ -91,3 +91,13 @@ test('PROXY-AUTH-011 authMode is "proxy" only for a request that actually authen
   const data = await res.json();
   assert.equal(data.authMode, 'proxy');
 });
+
+test('PROXY-HDR-1 PAC_PROXY_EMAIL_HEADER names the header carrying the verified email (deploykit: x-deploykit-email)', () => {
+  const env = { PAC_AUTH_MODE: 'proxy', PAC_TRUSTED_PROXY_SECRET: 's'.repeat(20), PAC_PROXY_EMAIL_HEADER: 'X-Deploykit-Email', ADMIN_EMAILS: 'boss@example.com' };
+  const mk = headers => ({ headers: { 'x-pac-proxy-secret': 's'.repeat(20), ...headers } });
+  assert.equal(principalFromProxyHeaders(mk({ 'x-deploykit-email': 'Boss@Example.com' }), env).kind, 'owner');
+  // With the header reconfigured, the default oauth2-proxy header is no longer trusted...
+  assert.equal(principalFromProxyHeaders(mk({ 'x-forwarded-email': 'boss@example.com' }), env), null);
+  // ...and the shared secret is still required.
+  assert.equal(principalFromProxyHeaders({ headers: { 'x-deploykit-email': 'boss@example.com' } }, env), null);
+});

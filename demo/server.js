@@ -55,8 +55,14 @@ const toolsList=[
   ['purge_application','Permanently remove an archived application: its record, invites, collaborator sessions and generated source workdir. Requires the application to be archived first. Refuses if it has been deployed unless force is set, in which case it is undeployed first on a best-effort basis. Irreversible.',{id:{type:'string'},force:{type:'boolean'}},['id']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 
-export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter(),orchestration=createOrchestrationAdapter(),agent=createAgentAdapter()}){
+export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.1:3000',github=createGithubPublisher(),runtime=createRuntimeAdapter(),graduationAdapters=createGraduationAdapters(),authoring=createAuthoringAdapter(),orchestration=createOrchestrationAdapter(),agent=createAgentAdapter(),basePath=process.env.PAC_BASE_PATH||''}){
   if(!ownerToken||ownerToken.length<32)throw new Error('Owner token must be at least 32 characters');
+  // Mounted under a URL prefix (e.g. /pac behind a shared nginx)? Paths arrive either with the prefix
+  // (nginx forwards the full URI) or without it (nginx stripped it) -- both work. Everything this server
+  // *emits* (links, redirects, the cookie path, the page's own asset URLs) carries the prefix.
+  const base=String(basePath||'').trim().replace(/\/+$/,'');
+  if(base&&!/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(base))throw new Error('PAC_BASE_PATH must look like /pac');
+  const logoutUrl=process.env.PAC_LOGOUT_URL||'';
   const store=new Store(directory,builder,runtime,graduationAdapters,authoring);
   // Loopback aliases: 127.0.0.1 and localhost name the same machine at the same port/scheme, and this
   // server only ever binds to loopback (HOST defaults to 127.0.0.1). Accepting both prevents a confusing
@@ -67,14 +73,20 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
     if(u.hostname==='127.0.0.1')originAliases.add(`${u.protocol}//localhost${u.port?':'+u.port:''}`);
     if(u.hostname==='localhost')originAliases.add(`${u.protocol}//127.0.0.1${u.port?':'+u.port:''}`);
   }catch{}
+  // Extra origins the same studio answers on (short host name vs FQDN, an ingress hostname...). Origin only, no path.
+  for(const o of String(process.env.PAC_PUBLIC_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean))originAliases.add(o.replace(/\/+$/,''));
   const server=http.createServer(async(req,res)=>{
     const json=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
-    const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
+    const cookie=token=>res.setHeader('Set-Cookie',`pac_session=${token}; HttpOnly; SameSite=Lax; Path=${base||''}/; Max-Age=86400${origin.startsWith('https:')?'; Secure':''}`);
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'");
     try{
       if(req.headers.origin&&!originAliases.has(req.headers.origin))throw new DemoError(403,'Origin denied');
-      const url=new URL(req.url,origin),path=url.pathname;
+      const url=new URL(req.url,origin);let path=url.pathname;
+      if(base){
+        if(path===base){res.writeHead(302,{Location:base+'/'+url.search});return res.end();}
+        if(path.startsWith(base+'/'))path=path.slice(base.length)||'/';
+      }
       if(req.method==='GET'&&path==='/health')return json(200,{ok:true});
       if(req.method==='GET'&&path==='/brand.css'){res.setHeader('Content-Type','text/css');return res.end(brand.cssVars());}
       if(req.method==='GET'&&path.startsWith('/brand/')){
@@ -114,6 +126,11 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
             // dark). No CSS-filter recoloring here either, same lint.forbidLogoRecolor reason.
             .replace(/\{\{PAC_LOGO_REVERSE_HTML\}\}/g,brand.assetPath('logo')?`<img class="brand-logo" src="/brand/logo" alt="${escape(brand.data.productName||'PAC Manager')}">`:`<span class="brand-text">${escape(brand.data.productName||'PAC Manager')}</span>`);
           content=content.replace(/\{\{PAC_ACCENT_OPTIONS\}\}/g,Object.keys(brand.accentPalette()).map(k=>`<option value="${escape(k)}">${escape(brand.accentLabel(k))}</option>`).join(''));
+        }
+        if(file.endsWith('.html')){
+          // Point every root-absolute asset/link at the prefix, and hand the page its base + sign-out target.
+          content=content.replace(/(href|src)="\/(?!\/)/g,`$1="${base}/`)
+            .replace('<meta charset="utf-8">',`<meta charset="utf-8"><meta name="pac-base" content="${escape(base)}"><meta name="pac-logout" content="${escape(logoutUrl)}">`);
         }
         return res.end(content);
       }
@@ -168,12 +185,12 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
               case 'rollback_application':output=store.rollback(principal,a.id,a.release);break;
               case 'build_application':output=store.startBuild(principal,a.id);break;
               case 'bind_mock_claims':store.bind(principal,a.id);output={bound:'claims.mock',live:false};break;
-              case 'publish_application':store.publish(principal,a.id);output={url:origin+'/?app='+a.id+'&published=1'};break;
-              case 'graduation_link':store.access(principal,a.id,true);output={url:origin+'/api/apps/'+a.id+'/export',authentication:'Studio browser session required'};break;
+              case 'publish_application':store.publish(principal,a.id);output={url:origin+base+'/?app='+a.id+'&published=1'};break;
+              case 'graduation_link':store.access(principal,a.id,true);output={url:origin+base+'/api/apps/'+a.id+'/export',authentication:'Studio browser session required'};break;
               case 'get_assurance':{const record=assuranceRecord(store.access(principal,a.id));output={record,completeness:completeness(record)};break;}
               case 'get_assurance_schema':output={schema:assuranceSchema,guide:authoringGuide};break;
               case 'update_assurance':output=saveAssurance(store,principal,a.id,a);break;
-              case 'preview_assurance_document':{const record=assuranceRecord(store.access(principal,a.id));output={markdown:reportMarkdown(record,a.kind),preview:origin+'/api/apps/'+a.id+'/reports/'+a.kind,release:record.release,sourceDigest:record.sourceDigest};break;}
+              case 'preview_assurance_document':{const record=assuranceRecord(store.access(principal,a.id));output={markdown:reportMarkdown(record,a.kind),preview:origin+base+'/api/apps/'+a.id+'/reports/'+a.kind,release:record.release,sourceDigest:record.sourceDigest};break;}
               case 'record_agent_run':output=store.recordBriefing(principal,a.id,a);break;
               case 'deploy_application':output=await store.deployApplication(principal,a.id);break;
               case 'deployment_status':output=await store.deploymentStatus(principal,a.id);break;
@@ -284,7 +301,7 @@ export function createDemo({directory,ownerToken,builder,origin='http://127.0.0.
         case 'chat':{const result=await appChat(app,{mode:body.mode,message:body.message});return json(200,store.recordChat(principal,id,{mode:body.mode,message:body.message,reply:result.reply}));}
         case 'binding':store.bind(principal,id);break;
         case 'publish':store.publish(principal,id);break;
-        case 'invite':return json(201,{url:origin+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});
+        case 'invite':return json(201,{url:origin+base+'/?app='+id+'#invite='+store.invite(principal,id,body.label)});
         case 'share':return json(200,{sharedWith:await store.shareWithEmail(principal,id,body.email)});
         case 'unshare':return json(200,{sharedWith:await store.unshareEmail(principal,id,body.email)});
         case 'deploy':return json(202,await store.deployApplication(principal,id));
