@@ -43,23 +43,31 @@ export function createProvider(env = process.env, fetchImpl = fetch) {
   const openaiModel = env.PAC_AUTHORING_OPENAI_MODEL || 'gpt-4.1';
   const timeoutMs = Number(env.PAC_AUTHORING_PROVIDER_TIMEOUT_MS || 150000);
 
+  const THINKING_FORMS = [{ type: 'disabled' }, { type: 'between_tools' }, null];
+  let thinkingIdx = 0;
   async function callLiteLLM(messages) {
     if (!litellmKey) throw new Error('litellm_not_configured: no PAC_LITELLM_KEY (nor DEPLOYKIT_LITELLM_KEY or LITELLM_MASTER_KEY) set');
-    const res = await fetchImpl(litellmUrl + '/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + litellmKey },
-      // Found live: claude-sonnet-5 through this gateway defaults to extended thinking ON,
-      // and with a normal-length authoring prompt the *entire* max_tokens budget can go to
-      // thinking, leaving message.content structurally empty (typeof "object", not a string)
-      // with finish_reason "length" -- not an error status, just silently no answer. Thinking
-      // buys nothing here (this is code generation against an already-fully-specified prompt,
-      // not an open-ended reasoning task), so disable it outright rather than just enlarging
-      // the budget and hoping enough is left over.
-      body: JSON.stringify({ model: litellmModel, messages, temperature: 0.4, max_tokens: 16000, thinking: { type: 'disabled' } }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
-    let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    // Which way to switch thinking off differs by model: older ones take {type:'disabled'}; Claude 5.5 rejects
+    // that with a 400 telling you to send {type:'between_tools'}; some take neither. Try the known forms in
+    // order, advancing only on a 400 that is about `thinking`, and remember what worked for this adapter.
+    let res, text, data;
+    for (let i = thinkingIdx; i < THINKING_FORMS.length; i++) {
+      res = await fetchImpl(litellmUrl + '/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + litellmKey },
+        // Found live: claude-sonnet-5 through this gateway defaults to extended thinking ON, and with a normal-length
+        // authoring prompt the *entire* max_tokens budget can go to thinking, leaving message.content structurally
+        // empty with finish_reason "length" -- not an error status, just silently no answer. Thinking buys nothing
+        // for code generation against an already-fully-specified prompt, so turn it off rather than enlarge the budget.
+        body: JSON.stringify({ model: litellmModel, messages, temperature: 0.4, max_tokens: 16000, ...(THINKING_FORMS[i] ? { thinking: THINKING_FORMS[i] } : {}) }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      text = await res.text();
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+      if (res.status === 400 && /thinking/i.test(text) && i + 1 < THINKING_FORMS.length) continue;
+      thinkingIdx = i;
+      break;
+    }
     if (!res.ok) throw new Error(`litellm ${res.status}: ${data.error?.message || data.detail || text.slice(0, 300)}`);
     const content = extractText(data.choices?.[0]?.message?.content);
     if (!content) {
