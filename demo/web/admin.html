@@ -8,7 +8,7 @@
 <div id="services" class="admin-grid"></div><button id="refresh-services" class="subtle">↻ Refresh</button></div></section>
 
 <section class="panel admin-panel"><div class="tab"><h2>Test an LLM call</h2><p>Sends one real completion through the configured LiteLLM proxy — real tokens, real cost.</p>
-<form id="llm-form" class="admin-form"><label>Model<input id="llm-model" placeholder="local-qwen"></label><label>Prompt<textarea id="llm-prompt" required maxlength="4000" placeholder="Say hello in five words."></textarea></label><button>Run completion</button></form>
+<form id="llm-form" class="admin-form"><label>Model<input id="llm-model" placeholder="chat (alias)"></label><label>Prompt<textarea id="llm-prompt" required maxlength="4000" placeholder="Say hello in five words."></textarea></label><button>Run completion</button></form>
 <div id="llm-result" class="admin-result" hidden></div></div></section>
 
 <section class="panel admin-panel"><div class="tab"><h2>Temporal</h2><p>Health check plus the most recent workflow executions, via the orchestration adapter.</p>

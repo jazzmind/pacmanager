@@ -34,7 +34,8 @@ export async function appChat(app, { mode, message }, env = process.env) {
   // out first -- found live, confirmed at 800 (empty) vs 3000 (a real answer) for the same
   // prompt. Documented elsewhere in this workspace as the same trap; this is the concrete
   // number that actually clears it for a short plan/answer.
-  const result = await completeChat({ messages: [{ role: 'system', content: system }, { role: 'user', content: message.trim() }], maxTokens: 3000 }, env);
+  const model = mode === 'plan' ? (env.PAC_PLAN_MODEL || 'agent') : (env.PAC_CHAT_MODEL || 'chat'); // aliases, resolved by LiteLLM
+  const result = await completeChat({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: message.trim() }], maxTokens: 3000 }, env);
   if (!result.content && result.finishReason === 'length') throw Object.assign(new Error('The model ran out of budget before it finished answering. Try a shorter or more specific question.'), { status: 502 });
   return { reply: result.content, mode };
 }

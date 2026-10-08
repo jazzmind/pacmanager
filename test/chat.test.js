@@ -100,3 +100,14 @@ test('CHAT-005 message length/emptiness validation matches comment()\'s own rule
   const tooLong=await call('/api/apps/'+created.data.id+'/chat',{mode:'chat',message:'x'.repeat(3001)});
   assert.equal(tooLong.status,400);
 });
+
+test('CHAT-ALIAS chat and plan request LiteLLM capability aliases, never a vendor model name',async t=>{
+  const seen=[];
+  const llm=await fakeLitellm(b=>{seen.push(b.model);return 'ok';});
+  t.after(()=>llm.close());
+  const {call}=await fixture(t,{env:{PAC_LITELLM_URL:'http://127.0.0.1:'+llm.address().port}});
+  const created=await call('/api/apps',{title:'Alias App',brief:'Exercises alias selection.',template:'claims',accent:'teal'});
+  await call('/api/apps/'+created.data.id+'/chat',{mode:'chat',message:'hello'});
+  await call('/api/apps/'+created.data.id+'/chat',{mode:'plan',message:'add a filter'});
+  assert.deepEqual(seen,['chat','agent']);
+});
