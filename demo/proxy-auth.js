@@ -44,7 +44,11 @@ export function principalFromProxyHeaders(req, env = process.env) {
   if (!configuredSecret || configuredSecret.length < 16) return null;
   const suppliedSecret = req.headers['x-pac-proxy-secret'];
   if (!equalConstantTime(suppliedSecret, configuredSecret)) return null;
-  const email = req.headers['x-forwarded-email'];
+  // Which header carries the already-verified email. Default is what oauth2-proxy sets; behind
+  // deploykit's sign-in it is x-deploykit-email (nginx overwrites it from the auth_request result, so a
+  // client can't supply it, and the shared secret above still has to match).
+  const emailHeader = String(env.PAC_PROXY_EMAIL_HEADER || 'x-forwarded-email').toLowerCase();
+  const email = req.headers[emailHeader];
   if (typeof email !== 'string' || !email.includes('@')) return null;
   const normalized = email.trim().toLowerCase();
   // `via:'proxy'` marks this principal as having genuinely come from the trusted-header path

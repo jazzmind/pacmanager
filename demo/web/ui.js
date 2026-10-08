@@ -1,3 +1,5 @@
+const BASE=document.querySelector('meta[name="pac-base"]')?.content||'';
+const LOGOUT_URL=document.querySelector('meta[name="pac-logout"]')?.content||'';
 import { initGraduation } from './graduation-ui.js';
 import { CAPABILITIES,CAPABILITY_GROUPS,USE_CASES,SENSITIVE_DATA_NOTICE,deriveKind,expandCapabilities } from './capabilities.js';
 const $=id=>document.getElementById(id);
@@ -80,8 +82,8 @@ function showView(v){
 }
 
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
-async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
-async function apiDelete(path){const r=await fetch('/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
+async function api(path,body){const r=await fetch(BASE+'/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
+async function apiDelete(path){const r=await fetch(BASE+'/api/'+path,{method:'DELETE'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
 
 // The new-application flow: a gallery of business use cases (each a starting set of
@@ -223,7 +225,7 @@ function draw(){
     autoBuiltRevision[app.id]=app.revision;
     api('apps/'+app.id+'/build',{}).then(refresh).catch(error=>toast(error.message));
   }
-  const ready=published?Boolean(app.release):app.build?.status==='ready';const url='/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
+  const ready=published?Boolean(app.release):app.build?.status==='ready';const url=BASE+'/api/apps/'+app.id+'/preview'+(published?'?published=1':'');
   const key=[app.id,published,app.build?.id,app.build?.status,app.release?.number,app.documents.length,app.comments.length,app.binding].join(':');
   $('preview').hidden=!ready;$('preview-empty').hidden=ready;$('preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');if(ready&&key!==previewKey){$('preview').src=url;previewKey=key;}
   $('open-preview').href=url;$('open-preview').hidden=!ready;
@@ -245,19 +247,27 @@ function renderHistory(){
   const current=app.release&&app.release.number===selectedRelease;
   $('history-rollback').hidden=!selectedRelease||current||me.kind!=='owner';
   $('history-preview').setAttribute('sandbox',app.config.tier==='static'?'allow-scripts':'');
-  $('history-preview').src=selectedRelease?'/api/apps/'+app.id+'/preview?release='+selectedRelease:'';
+  $('history-preview').src=selectedRelease?BASE+'/api/apps/'+app.id+'/preview?release='+selectedRelease:'';
 }
 async function enter(){me=await api('me');$('identity').textContent=me.label;$('login').hidden=true;$('workspace').hidden=false;$('connect').hidden=me.kind!=='owner';$('logout').textContent=me.authMode==='proxy'?'Sign out ↗':'Sign out';await refresh();}
 $('signin').onsubmit=action(async()=>{await api('session',{token:$('token').value});$('token').value='';await enter();});
-$('logout').onclick=action(async()=>{if(me&&me.authMode==='proxy'){location.href='/oauth2/sign_out';return;}await api('logout',{});location.href='/';});
+// Sign-out: in a proxied deployment PAC_LOGOUT_URL names the identity provider's sign-out (deploykit's
+// /auth/logout is a POST -> form submit); the local oauth2-proxy default is kept when it isn't set.
+$('logout').onclick=action(async()=>{
+  if(me&&me.authMode==='proxy'){
+    if(LOGOUT_URL){const f=document.createElement('form');f.method='POST';f.action=LOGOUT_URL;document.body.appendChild(f);f.submit();return;}
+    location.href='/oauth2/sign_out';return;
+  }
+  await api('logout',{});location.href=BASE+'/';
+});
 $('new').onclick=$('start').onclick=()=>editor();
 $('connect').onclick=()=>{$('user-dropdown').hidden=true;$('connection').showModal();};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-$('crumb-home').onclick=action(async()=>{selected=null;currentPlan=null;history.replaceState(null,'','/');await refresh();});
+$('crumb-home').onclick=action(async()=>{selected=null;currentPlan=null;history.replaceState(null,'',BASE+'/');await refresh();});
 // currentPlan is a draft for the app currently open, not per-app state on the server -- must
 // be dropped on every switch, or a plan drafted for one app would wrongly still show as
 // "proposed" for whichever app is opened next.
-const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;currentPlan=null;$('switcher-popover').hidden=true;history.replaceState(null,'','/?app='+selected);await refresh();});
+const openApp=action(async e=>{const b=e.target.closest('[data-app]');if(!b)return;selected=b.dataset.app;published=false;currentPlan=null;$('switcher-popover').hidden=true;history.replaceState(null,'',BASE+'/?app='+selected);await refresh();});
 $('home').onclick=openApp;$('switcher-list').onclick=openApp;
 $('crumb-toggle').onclick=e=>{e.stopPropagation();renderSwitcher();$('switcher-popover').hidden=!$('switcher-popover').hidden;};
 $('switcher-new').onclick=()=>{$('switcher-popover').hidden=true;editor();};

@@ -1,7 +1,8 @@
+const BASE=document.querySelector('meta[name="pac-base"]')?.content||'';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6000);}
-async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
+async function api(path,body){const r=await fetch(BASE+'/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
 const action=fn=>async e=>{e?.preventDefault();try{await fn(e);}catch(error){toast(error.message);}};
 
 const STATUS_LABEL={up:'● up',down:'● down',absent:'○ absent'};
@@ -14,7 +15,7 @@ async function loadServices(){
 async function loadOverview(){
   const {apps,audit,totals}=await api('admin/overview');
   $('totals').textContent=`${totals.apps} applications · ${totals.published} published · ${totals.deployed} deployed · ${totals.archived} archived`;
-  $('apps-table').innerHTML=apps.map(a=>`<div class="admin-row"><strong>${esc(a.config.title)}</strong><span>${esc(a.config.kind||a.config.template||'template')}</span><span>${a.archivedAt?'archived':a.published?'published v'+a.release.number:a.build?.status||'draft'}</span><span>${a.ownerEmail?esc(a.ownerEmail):'—'}</span><span>${a.completeness?a.completeness.missingOrProposed+' gaps':'—'}</span><a href="/?app=${a.id}">Open ↗</a></div>`).join('')||'<p>No applications yet.</p>';
+  $('apps-table').innerHTML=apps.map(a=>`<div class="admin-row"><strong>${esc(a.config.title)}</strong><span>${esc(a.config.kind||a.config.template||'template')}</span><span>${a.archivedAt?'archived':a.published?'published v'+a.release.number:a.build?.status||'draft'}</span><span>${a.ownerEmail?esc(a.ownerEmail):'—'}</span><span>${a.completeness?a.completeness.missingOrProposed+' gaps':'—'}</span><a href="${BASE}/?app=${a.id}">Open ↗</a></div>`).join('')||'<p>No applications yet.</p>';
   $('audit-feed').innerHTML=audit.map(e=>`<div class="admin-row"><span>${esc(new Date(e.at).toLocaleString())}</span><strong>${esc(e.title)}</strong><span>${esc(e.event)}</span><span>${esc(e.actor||'')}</span></div>`).join('')||'<p>No activity recorded yet.</p>';
 }
 

@@ -24,6 +24,14 @@ const RESERVED_ENV_SENTINELS = {
 // risk pracman/docs/architecture.md's "Redundancies" section calls out). A fixed convention
 // (LITELLM_URL/LITELLM_API_KEY) is injected alongside whatever variable name the definition
 // itself declared, since no application-facing convention for this existed before.
+// Where deployed apps are mounted: "/" gives /<id> (local); a shared host sets e.g. "/pac-" so the app is at
+// /pac-<id> (one path segment, matching its container name and out of the way of other platforms' routes).
+function appPathPrefix(env = process.env) {
+  const p = env.PAC_APP_PATH_PREFIX || '/';
+  if (!/^\/[a-z0-9-]*$/.test(p)) throw new Error(`PAC_APP_PATH_PREFIX must look like "/" or "/pac-", got ${JSON.stringify(p)}`);
+  return p;
+}
+
 function litellmEnv(env = process.env) {
   return { url: env.PAC_LITELLM_URL || env.DEPLOYKIT_LITELLM_URL, key: env.PAC_LITELLM_KEY || env.DEPLOYKIT_LITELLM_KEY };
 }
@@ -79,12 +87,15 @@ export function toAppSpec(payload, { localPath } = {}) {
     env_vars[key] = sentinel;
   }
   Object.assign(env_vars, envVars); // explicit values always win over a sentinel
+  // Tell the app where it is mounted (deploykit's templates read APP_BASE_PATH for the same reason); an
+  // explicit value in envVars wins.
+  if (!('APP_BASE_PATH' in env_vars)) env_vars.APP_BASE_PATH = pathPrefix || `${appPathPrefix()}${appId}`;
 
   const spec = {
     id: appId,
     name: displayName || appId,
     port: port || 3000,
-    path_prefix: pathPrefix || `/${appId}`,
+    path_prefix: pathPrefix || `${appPathPrefix()}${appId}`,
     health_endpoint: healthEndpoint || '/health',
     env_vars,
     memory_limit: memoryLimit || '512m',
