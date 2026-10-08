@@ -461,3 +461,20 @@ kbd{font:600 10px ui-monospace,monospace;border:1px solid var(--pac-line);border
   .sigil,.sigil .st,.card,.idea,.dots i,.sk,.sk-chips i,.badge.live::before,.chat-card.busy strong::before,.thread-chatlog-a.live .md>:last-child::after{animation:none!important;transition:none!important}
   .card:hover,.idea:hover{transform:none}.card:hover .sigil{transform:none}
 }
+
+/* Live preview of a server (app-tier) application */
+#live-panel{flex:1;display:flex;flex-direction:column;min-height:0}
+#live-panel[hidden]{display:none}
+.live-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--pac-line);flex-wrap:wrap}
+.live-state{font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.live-state::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--pac-muted)}
+.live-state.starting::before{background:var(--pac-brand);animation:pulse 1s ease-in-out infinite}
+.live-state.running::before{background:var(--pac-ok,var(--pac-brand))}
+.live-state.error::before{background:var(--pac-danger,var(--pac-muted))}
+.live-actions{display:inline-flex;align-items:center;gap:8px}
+#live-frame{flex:1;width:100%;border:0;background:var(--pac-surface)}
+.live-msg{padding:28px;color:var(--pac-muted);max-width:60ch;margin:auto;text-align:center}
+.live-msg:empty{display:none}
+.live-logs{margin:0;padding:12px 14px;max-height:35%;overflow:auto;background:var(--pac-ink,#111);color:var(--pac-surface,#eee);font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live-state.starting::before{animation:none}}

@@ -72,6 +72,12 @@
 <div class="workgrid">
   <div class="canvas" id="canvas-view">
     <iframe id="preview" title="Application preview" sandbox=""></iframe>
+    <div id="live-panel" hidden>
+      <div class="live-bar"><span id="live-state" class="live-state"></span><span class="live-actions"><button id="live-start" class="primary"><svg class="icon"><use href="#icon-play"/></svg><span>Start live preview</span></button><button id="live-stop" class="ghost" hidden><svg class="icon"><use href="#icon-stop"/></svg>Stop</button><button id="live-logs-btn" class="ghost" hidden>Logs</button><a id="live-open" target="_blank" rel="noopener" hidden>Open in new tab<svg class="icon"><use href="#icon-external"/></svg></a></span></div>
+      <iframe id="live-frame" title="Live application preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" hidden></iframe>
+      <div id="live-msg" class="live-msg"></div>
+      <pre id="live-logs" class="live-logs" hidden></pre>
+    </div>
     <div id="preview-empty"><h2>Your application starts here.</h2><p>Ask for it in the chat, or build the current definition to see a live preview.</p></div>
   </div>
   <div class="canvas history-view" id="history-view" hidden>

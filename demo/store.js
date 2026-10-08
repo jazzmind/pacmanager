@@ -37,6 +37,7 @@ export class Store {
     this.state=existsSync(this.file)?JSON.parse(readFileSync(this.file,'utf8')):{version:1,apps:[],sessions:[],invites:[]};
     for(const app of this.state.apps)if(app.build?.status==='building'){app.build.status='failed';app.build.logs.push({at:now(),text:'Server restarted during build. Retry the build.'});}
     for(const app of this.state.apps)if(app.generation?.status==='generating'){app.generation.status='failed';app.generation.logs.push({at:now(),text:'Server restarted during generation. Retry.'});}
+    for(const app of this.state.apps)if(app.preview?.status==='starting'){app.preview.status='error';app.preview.message='Server restarted while the preview was starting. Start it again.';}
     for(const app of this.state.apps)if(!app.deployments)app.deployments=[];
     for(const app of this.state.apps)if(app.generation===undefined)app.generation=null;
     for(const app of this.state.apps)if(app.archivedAt===undefined){app.archivedAt=null;app.archivedBy=null;}
@@ -402,6 +403,42 @@ export class Store {
     const record={id:id(),status:result.status,release:app.release.number,at:now(),detail:result.output||null,message:result.status==='error'?result.message:null};
     app.deployments=[...app.deployments,record].slice(-20);this.audit(app,'deployment requested for release '+app.release.number,p);this.save();
     return record;
+  }
+  /** Live preview of an app-tier build (no inline HTML exists for a server app): deploys the BUILT source -- not the published
+   * release -- under its own deploy id (`<slug>-preview`, so its container, route, database and keys are separate from the published
+   * deployment) and records progress on app.preview. Runs in the background; the UI polls GET /preview-status. */
+  async startPreview(p,appId){
+    const app=this.access(p,appId,true),runtime=this.requireRuntime();
+    if(app.config.tier!=='app')fail(409,'Only server (app-tier) applications need a live preview; this one renders inline.');
+    if(app.build?.status!=='ready')fail(409,'Build this application first');
+    if(app.preview?.status==='starting')fail(409,'Preview is already starting');
+    if(!app.previewId)app.previewId=(slugify(app.config.title,app.id)+'-preview').slice(0,60);
+    const deployId=app.previewId,rev=app.build.revision,r=app.build.result;
+    app.preview={status:'starting',deployId,revision:rev,at:now(),message:null};this.save();
+    const c=app.config,payload={id:deployId,displayName:c.title+' (preview)',tier:'app',release:{number:0,sourceDigest:r.sourceDigest,htmlDigest:r.htmlDigest},
+      sourcePath:c.sourcePath,dockerfile:c.dockerfile,port:c.port,pathPrefix:c.pathPrefix?c.pathPrefix+'-preview':undefined,healthEndpoint:c.healthEndpoint,envRefs:c.envRefs,
+      syncCapable:c.syncCapable,memoryLimit:c.memoryLimit,cpuLimit:c.cpuLimit};
+    const job=(async()=>{
+      try{const result=await runtime.deploy({artifactId:app.id,releaseDigest:r.sourceDigest,payload});
+        if(result.status==='error')throw new Error(result.message);
+        app.preview={...app.preview,status:'running',at:now()};
+      }catch(error){app.preview={...app.preview,status:'error',message:String(error.message).slice(0,600),at:now()};}
+      this.audit(app,'live preview '+app.preview.status,p);this.save();
+    })();
+    this.lastPreview=job;
+    return app.preview;
+  }
+  async previewStatus(p,appId){
+    const app=this.access(p,appId);if(!app.preview)return {status:'none'};
+    if(app.preview.status!=='running')return app.preview;
+    try{const live=this.unwrap(await this.requireRuntime().status({artifactId:app.id,payload:{id:app.preview.deployId}}));return {...app.preview,live};}
+    catch(error){return {...app.preview,live:null,liveError:String(error.message).slice(0,300)};}
+  }
+  async previewLogs(p,appId,tail){const app=this.access(p,appId);if(!app.preview)fail(404,'No live preview has been started');return this.unwrap(await this.requireRuntime().logs({artifactId:app.id,payload:{id:app.preview.deployId,tail:tail||100}}));}
+  async stopPreview(p,appId){
+    const app=this.access(p,appId,true),runtime=this.requireRuntime();if(!app.preview)fail(409,'No live preview is running');
+    const result=await runtime.undeploy({artifactId:app.id,releaseDigest:app.build?.result?.sourceDigest,payload:{id:app.preview.deployId}});
+    this.unwrap(result);app.preview=null;this.audit(app,'live preview stopped',p);this.save();return {status:'none'};
   }
   requireDeployId(app){if(!app.deployId)fail(404,'This application has not been deployed yet.');return app.deployId;}
   async deploymentStatus(p,appId){const app=this.access(p,appId),runtime=this.requireRuntime(),deployId=this.requireDeployId(app);return this.unwrap(await runtime.status({artifactId:app.id,payload:{id:deployId}}));}

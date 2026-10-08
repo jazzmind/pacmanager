@@ -94,18 +94,47 @@ test('APP-TIER-004 the source digest changes when a file in the referenced tree 
   server.close();
 });
 
-test('APP-TIER-005 preview returns app-tier metadata, not an attempt to render null HTML', async t => {
+test('APP-TIER-005 /preview for an app-tier build is a readable HTML page (never raw JSON in the pane) pointing at the live preview', async t => {
   const { server, base } = await withServer(t);
   const src = sourceTree(t, { 'index.html': 'x' });
   const created = await call(base, '/api/apps', { title: 'Real App', brief: 'Preview shape test.', template: 'knowledge', accent: 'blue', tier: 'app', sourcePath: src });
   await call(base, `/api/apps/${created.data.id}/build`, {});
   await new Promise(r => setTimeout(r, 50));
-  const preview = await get(base, `/api/apps/${created.data.id}/preview`);
-  assert.equal(preview.status, 200);
-  assert.equal(preview.data.tier, 'app');
-  assert.match(preview.data.preview, /not available for the app tier/);
-  assert.ok(preview.data.sourceDigest);
+  const res = await fetch(base + `/api/apps/${created.data.id}/preview`, { headers: { Authorization: 'Bearer ' + 'h'.repeat(64) } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  assert.match(await res.text(), /live preview/i);
   server.close();
+});
+
+test('APP-TIER-LIVE start/status/stop a live preview under its own deploy id, from the build (not the published release)', async t => {
+  const calls = [];
+  const runtime = {
+    deploy: async r => { calls.push(['deploy', r.payload.id, r.payload.release.number]); return { status: 'ok', output: {} }; },
+    status: async r => ({ status: 'ok', output: { running: true, id: r.payload.id } }),
+    logs: async r => ({ status: 'ok', output: { lines: ['hello'] } }),
+    undeploy: async r => { calls.push(['undeploy', r.payload.id]); return { status: 'ok', output: {} }; },
+  };
+  const { server } = fixture(t, runtime);
+  await new Promise(r => server.listen(0, '127.0.0.1', r)); t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const src = sourceTree(t, { 'index.html': 'x' });
+  const created = await call(base, '/api/apps', { title: 'Real App', brief: 'Live preview test.', template: 'knowledge', accent: 'blue', tier: 'app', sourcePath: src });
+  const id = created.data.id;
+  assert.equal((await call(base, `/api/apps/${id}/preview-start`, {})).status, 409); // not built yet
+  await call(base, `/api/apps/${id}/build`, {}); await new Promise(r => setTimeout(r, 80));
+  const started = await call(base, `/api/apps/${id}/preview-start`, {});
+  assert.equal(started.status, 202);
+  await new Promise(r => setTimeout(r, 80));
+  const st = await get(base, `/api/apps/${id}/preview-status`);
+  assert.equal(st.data.status, 'running');
+  assert.match(st.data.deployId, /-preview$/);
+  assert.match(st.data.url, new RegExp(st.data.deployId + '/$'));
+  assert.deepEqual(calls[0].slice(0, 3).map(String), ['deploy', st.data.deployId, '0']); // build-derived, never a published release number
+  assert.equal((await get(base, `/api/apps/${id}/preview-logs`)).status, 200);
+  assert.equal((await call(base, `/api/apps/${id}/preview-stop`, {})).status, 200);
+  assert.equal((await get(base, `/api/apps/${id}/preview-status`)).data.status, 'none');
+  assert.deepEqual(calls[1], ['undeploy', st.data.deployId]);
 });
 
 test('APP-TIER-006 the standalone export format refuses an app-tier release with a clear redirect to graduate_application', async t => {
