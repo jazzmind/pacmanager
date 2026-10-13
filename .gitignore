@@ -8,3 +8,4 @@ coverage/
 demo-deployment.json
 .specguard/traceability.json
 .specguard/plans/
+.claude
